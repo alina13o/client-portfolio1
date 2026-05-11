@@ -1,0 +1,50 @@
+{% extends "portfolio/base.html" %}
+{% load portfolio_extras %}
+
+{% block content %}
+  <section class="panel">
+    <h1>Графики</h1>
+    {% if manager %}
+      <p class="muted">{{ manager.full_name }} · {{ manager.email|default:"почта не указана" }} · {% if manager.age %}{{ manager.age }} лет{% else %}возраст не указан{% endif %}</p>
+    {% endif %}
+    <form method="get" class="toolbar">
+      <select name="period">
+        <option value="6" {% if selected_period == '6' %}selected{% endif %}>Последние 6 мес</option>
+        <option value="year" {% if selected_period == 'year' %}selected{% endif %}>Последний год</option>
+        <option value="all" {% if selected_period == 'all' %}selected{% endif %}>Весь период</option>
+        <option value="custom" {% if selected_period == 'custom' %}selected{% endif %}>Произвольный диапазон</option>
+      </select>
+      <input type="date" name="start">
+      <input type="date" name="end">
+      <button class="primary" style="max-width:160px;">Применить</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Выручка и прибыль по месяцам</h2>
+    <div class="chart">
+      {% for item in monthly %}
+        <div class="bar" style="height:{{ item.height }}%;" title="{{ item.label }} — {{ item.value|money }}"></div>
+      {% empty %}<span class="muted">Нет данных.</span>{% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Топ-10 клиентов по выручке</h2>
+    {% for item in top_clients %}
+      <div style="display:grid;grid-template-columns:260px 1fr 120px;gap:12px;align-items:center;margin:10px 0;">
+        <span>{{ item.label }}</span>
+        <div style="height:18px;background:#e7edf7;border-radius:99px;overflow:hidden;"><div style="height:100%;width:{{ item.width }}%;background:var(--accent);"></div></div>
+        <strong class="number">{{ item.value|money }}</strong>
+      </div>
+    {% empty %}<p class="muted">Нет данных.</p>{% endfor %}
+  </section>
+
+  <section class="panel">
+    <h2>Распределение по номенклатурным группам</h2>
+    <p class="muted">В исходном помесячном Excel номенклатурные группы не указаны, поэтому сумма попадает в группу «Без группы».</p>
+    {% for item in groups %}
+      <p><strong>{{ item.name }}</strong>: {{ item.value|money }}</p>
+    {% endfor %}
+  </section>
+{% endblock %}

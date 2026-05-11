@@ -1,0 +1,44 @@
+{% extends "portfolio/base.html" %}
+
+{% block content %}
+  <section class="panel">
+    <h1>Менеджеры</h1>
+    <button class="primary" style="max-width:190px;" onclick="document.getElementById('manager-modal').showModal()">+ Новый менеджер</button>
+  </section>
+
+  <section class="panel">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ФИО</th><th>Email</th><th>Возраст</th><th>Клиентов</th><th>Активен</th><th></th></tr></thead>
+        <tbody>
+          {% for manager in managers %}
+            <tr>
+              <form method="post" action="{% url 'manager_update' manager.id %}">
+                {% csrf_token %}
+                <td><input name="full_name" value="{{ manager.full_name }}"></td>
+                <td><input name="email" value="{{ manager.email }}"></td>
+                <td><input name="age" type="number" value="{{ manager.age|default:'' }}"></td>
+                <input type="hidden" name="current_year_plan" value="{{ manager.current_year_plan }}">
+                <td>{{ manager.clients_count }}</td>
+                <td><input name="is_active" type="checkbox" {% if manager.is_active %}checked{% endif %}></td>
+                <td><button type="submit">Сохранить</button></td>
+              </form>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <dialog id="manager-modal" class="modal">
+    <form class="modal-body" method="post">
+      {% csrf_token %}
+      <h2>Новый менеджер</h2>
+      {{ form.as_p }}
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button type="button" onclick="document.getElementById('manager-modal').close()">Отмена</button>
+        <button class="primary" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+{% endblock %}

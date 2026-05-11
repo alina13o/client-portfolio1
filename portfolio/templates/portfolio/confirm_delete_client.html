@@ -1,0 +1,14 @@
+{% extends "portfolio/base.html" %}
+
+{% block content %}
+  <section class="panel">
+    <h1>Удалить клиента вместе с заказами?</h1>
+    <p>У клиента «{{ client.name }}» есть заказы или платежи. Удаление вместе с заказами доступно только владельцу.</p>
+    <form method="post" action="{% url 'client_delete' client.id %}">
+      {% csrf_token %}
+      <input type="hidden" name="confirm_orders" value="yes">
+      <button class="primary" style="background:#b42318;border-color:#b42318;">Удалить клиента и заказы</button>
+      <a class="button-link" href="{% url 'client_detail' client.id %}">Отмена</a>
+    </form>
+  </section>
+{% endblock %}

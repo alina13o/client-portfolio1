@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Клиентский портфель</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --surface: rgba(255,255,255,.78);
+      --line: rgba(120,133,154,.24);
+      --text: #18202f;
+      --muted: #667085;
+      --accent: #007aff;
+      --accent-dark: #0057b8;
+      --soft: rgba(255,255,255,.62);
+      --danger: #b42318;
+      --success: #067647;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 18% 0%, rgba(0,122,255,.12), transparent 28%),
+        linear-gradient(180deg, #fbfcff 0%, var(--bg) 100%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+    }
+    header {
+      background: rgba(255,255,255,.72);
+      backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--line);
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    header strong { font-size: 18px; }
+    nav { display: flex; gap: 14px; align-items: center; }
+    nav a, .link-button {
+      color: var(--accent-dark);
+      text-decoration: none;
+      border: 0;
+      background: transparent;
+      font: inherit;
+      cursor: pointer;
+      padding: 0;
+    }
+    main { padding: 24px 28px 40px; max-width: 1280px; margin: 0 auto; }
+    h1, h2 { margin-top: 0; }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 18px;
+      box-shadow: 0 18px 50px rgba(31,41,55,.08);
+    }
+    .grid { display: grid; gap: 14px; }
+    .grid.kpis { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    .kpi {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: rgba(255,255,255,.65);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.8);
+    }
+    .kpi span { color: var(--muted); display: block; margin-bottom: 8px; }
+    .kpi strong { font-size: 22px; }
+    .hero-kpis .kpi {
+      background: linear-gradient(180deg, #ffffff 0%, var(--soft) 100%);
+      min-height: 112px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: end;
+      flex-wrap: wrap;
+    }
+    .segmented {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    .segmented label {
+      margin: 0;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .segmented input { display: none; }
+    .segmented span {
+      display: block;
+      padding: 8px 10px;
+      border-radius: 12px;
+      white-space: nowrap;
+    }
+    .segmented input:checked + span {
+      background: var(--accent);
+      color: white;
+    }
+    .date-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(145px, 1fr));
+      gap: 10px;
+      width: 100%;
+    }
+    form.inline {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+    label { display: block; color: var(--muted); margin-bottom: 5px; }
+    input, button {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 9px 10px;
+      font: inherit;
+    }
+    button.primary {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+      cursor: pointer;
+    }
+    .button-link {
+      display: inline-block;
+      background: var(--accent);
+      color: white;
+      border-radius: 6px;
+      padding: 9px 12px;
+      text-decoration: none;
+    }
+    .table-wrap { overflow-x: auto; }
+    .modal {
+      border: 0;
+      border-radius: 20px;
+      padding: 0;
+      max-width: 620px;
+      width: calc(100% - 32px);
+      box-shadow: 0 24px 80px rgba(15,23,42,.26);
+    }
+    .modal::backdrop { background: rgba(20,28,40,.28); backdrop-filter: blur(8px); }
+    .modal-body { padding: 24px; background: rgba(255,255,255,.94); }
+    .suggest-box {
+      position: absolute;
+      z-index: 20;
+      width: calc(100% - 44px);
+      margin-top: 6px;
+      background: rgba(255,255,255,.96);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 18px 50px rgba(31,41,55,.16);
+      overflow: hidden;
+    }
+    .suggest-box a { display: block; padding: 10px 14px; color: var(--text); text-decoration: none; }
+    .suggest-box a:hover { background: #eef5ff; }
+    mark { background: #fff2a8; border-radius: 4px; padding: 0 2px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--line);
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #eef2f6; font-weight: 600; }
+    .number { text-align: right; white-space: nowrap; }
+    .muted { color: var(--muted); }
+    .chart {
+      display: flex;
+      align-items: end;
+      gap: 8px;
+      min-height: 150px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+    }
+    .bar {
+      flex: 1;
+      min-width: 22px;
+      background: var(--accent);
+      border-radius: 6px 6px 0 0;
+    }
+    .messages { list-style: none; padding: 0; margin: 0 0 16px; }
+    .messages li { padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; }
+    .messages .success { background: #ecfdf3; color: var(--success); }
+    .messages .error { background: #fef3f2; color: var(--danger); }
+    @media (max-width: 720px) {
+      header { align-items: flex-start; flex-direction: column; }
+      main { padding: 16px; }
+      table { font-size: 13px; }
+      .date-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Анализ клиентского портфеля</strong>
+    
+  </header>
+  <main>
+    
+    
+  <section class="panel" style="max-width: 420px; margin: 48px auto;">
+    <h1>Вход</h1>
+    <form method="post">
+      <input type="hidden" name="csrfmiddlewaretoken" value="dnN8PHJK06WwWZhvmhb0oocrP8DyxgtgnqEIjAR7HifIz7gRVfebPQ1W425YMa2U">
+      
+      <p>
+        <label for="id_username">Логин</label>
+        <input type="text" name="username" autofocus autocapitalize="none" autocomplete="username" maxlength="150" required id="id_username">
+      </p>
+      <p>
+        <label for="id_password">Пароль</label>
+        <input type="password" name="password" autocomplete="current-password" required id="id_password">
+      </p>
+      <button class="primary" type="submit">Войти</button>
+    </form>
+  </section>
+
+  </main>
+</body>
+</html>

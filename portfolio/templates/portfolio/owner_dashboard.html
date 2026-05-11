@@ -1,0 +1,50 @@
+{% extends "portfolio/base.html" %}
+{% load portfolio_extras %}
+
+{% block content %}
+  <section class="panel">
+    <h1>Сводка по бизнесу</h1>
+    <p class="muted">Агрегация по всем менеджерам и всем клиентам.</p>
+  </section>
+
+  <section class="grid kpis hero-kpis">
+    <div class="kpi"><span>Total Revenue</span><strong>{{ kpis.total_revenue|money }}</strong></div>
+    <div class="kpi"><span>Total Profit</span><strong>{{ kpis.total_profit|money }}</strong></div>
+    <div class="kpi"><span>Выручка текущего года</span><strong>{{ kpis.current_year_revenue|money }}</strong></div>
+    <div class="kpi"><span>Выручка прошлого года</span><strong>{{ kpis.previous_year_revenue|money }}</strong></div>
+    <div class="kpi"><span>Динамика год к году</span><strong>{{ kpis.year_growth_rate|percent }}</strong></div>
+    <div class="kpi"><span>Клиентов всего</span><strong>{{ kpis.total_clients }}</strong></div>
+    <div class="kpi"><span>Купили клиентов</span><strong>{{ kpis.bought_clients }}</strong></div>
+    <div class="kpi"><span>Средний чек</span><strong>{{ kpis.average_check|money }}</strong></div>
+  </section>
+
+  {% include "portfolio/includes/period_form.html" %}
+
+  <section class="panel">
+    <h2>Рейтинг менеджеров</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Менеджер</th>
+            <th class="number">Выручка (период)</th>
+            <th class="number">Прибыль</th>
+            <th class="number">Кол-во клиентов</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in ranking %}
+            <tr>
+              <td><a href="{% url 'owner_manager_detail' row.manager.id %}">{{ row.manager.full_name }}</a></td>
+              <td class="number">{{ row.revenue|money }}</td>
+              <td class="number">{{ row.profit|money }}</td>
+              <td class="number">{{ row.clients_count }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="muted">Менеджеры пока не добавлены.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

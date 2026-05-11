@@ -1,0 +1,80 @@
+{% extends "portfolio/base.html" %}
+
+{% block content %}
+  <section class="panel">
+    <h1>Сравнение периодов</h1>
+    <form class="inline" method="get">
+      {% for field in form %}
+        <p>
+          {{ field.label_tag }}
+          {{ field }}
+          {{ field.errors }}
+        </p>
+      {% endfor %}
+      <p>
+        <button class="primary" type="submit">Сравнить</button>
+      </p>
+    </form>
+  </section>
+
+  <section class="grid kpis">
+    <div class="kpi">
+      <span>Выручка период 1</span>
+      <strong>{{ comparison.summary.revenue_p1|floatformat:2 }}</strong>
+    </div>
+    <div class="kpi">
+      <span>Выручка период 2</span>
+      <strong>{{ comparison.summary.revenue_p2|floatformat:2 }}</strong>
+    </div>
+    <div class="kpi">
+      <span>Дельта</span>
+      <strong>{{ comparison.summary.delta_revenue|floatformat:2 }}</strong>
+    </div>
+    <div class="kpi">
+      <span>Активные клиенты</span>
+      <strong>{{ comparison.summary.active_clients_p1 }} -> {{ comparison.summary.active_clients_p2 }}</strong>
+    </div>
+    <div class="kpi">
+      <span>Retention</span>
+      <strong>
+        {% if comparison.summary.retention_rate is None %}
+          нет данных
+        {% else %}
+          {{ comparison.summary.retention_rate|floatformat:2 }}
+        {% endif %}
+      </strong>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Клиенты и рекомендации</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Клиент</th>
+          <th class="number">P1</th>
+          <th class="number">P2</th>
+          <th class="number">Дельта</th>
+          <th>Сегмент</th>
+          <th>Рекомендация</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in comparison.rows %}
+          <tr>
+            <td>{{ row.client.name }}</td>
+            <td class="number">{{ row.revenue_p1|floatformat:2 }}</td>
+            <td class="number">{{ row.revenue_p2|floatformat:2 }}</td>
+            <td class="number">{{ row.delta_revenue|floatformat:2 }}</td>
+            <td>{{ row.segment }}</td>
+            <td>{{ row.recommendation }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="muted">Данных пока нет. Загрузите Excel или добавьте заказы в админке.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

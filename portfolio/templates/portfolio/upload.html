@@ -1,0 +1,15 @@
+{% extends "portfolio/base.html" %}
+
+{% block content %}
+  <section class="panel">
+    <h1>Загрузка Excel</h1>
+    <p class="muted">
+      Поддерживается рабочий формат «одна строка = один заказ». Для старых портфельных файлов система также пытается распознать помесячные суммы.
+    </p>
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      {{ form.as_p }}
+      <button class="primary" type="submit">Загрузить</button>
+    </form>
+  </section>
+{% endblock %}

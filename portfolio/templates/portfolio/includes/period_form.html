@@ -1,0 +1,35 @@
+<form method="get" class="panel" id="period-form">
+  <h2>Динамика и Сравнение</h2>
+  <div class="toolbar">
+    <div>
+      <label>Готовые сценарии</label>
+      <div class="segmented">
+        {% for value, label in form.fields.preset.choices %}
+          <label>
+            <input type="radio" name="preset" value="{{ value }}" {% if form.preset.value == value %}checked{% endif %}>
+            <span>{{ label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+    <button class="primary" style="max-width: 180px;" type="submit">Применить</button>
+  </div>
+  <div class="date-grid" id="custom-dates" style="margin-top: 14px;">
+    <p>{{ form.period_1_start.label_tag }}{{ form.period_1_start }}</p>
+    <p>{{ form.period_1_end.label_tag }}{{ form.period_1_end }}</p>
+    <p>{{ form.period_2_start.label_tag }}{{ form.period_2_start }}</p>
+    <p>{{ form.period_2_end.label_tag }}{{ form.period_2_end }}</p>
+  </div>
+</form>
+<script>
+  (() => {
+    const form = document.getElementById('period-form');
+    const customDates = document.getElementById('custom-dates');
+    const sync = () => {
+      const selected = form.querySelector('input[name="preset"]:checked');
+      customDates.style.display = selected && selected.value === 'custom' ? 'grid' : 'none';
+    };
+    form.querySelectorAll('input[name="preset"]').forEach((input) => input.addEventListener('change', sync));
+    sync();
+  })();
+</script>

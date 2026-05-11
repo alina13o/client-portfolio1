@@ -1,0 +1,69 @@
+{% extends "portfolio/base.html" %}
+{% load portfolio_extras %}
+
+{% block content %}
+  <section class="panel">
+    <h1>
+      Портфель менеджера: {{ manager.full_name }}
+      {% if readonly %}<span class="muted">View Only</span>{% endif %}
+    </h1>
+    <p class="muted">Общие показатели рассчитаны за весь исторический период, а годовые карточки — по текущему и прошлому календарному году.</p>
+  </section>
+
+  <section class="grid kpis hero-kpis">
+    <div class="kpi"><span>Выручка портфеля за текущий год</span><strong>{{ kpis.current_year_revenue|money }}</strong></div>
+    <div class="kpi"><span>Плановая выручка на портфель</span><strong>{{ kpis.portfolio_plan|money }}</strong></div>
+    <div class="kpi"><span>Выручка за прошлый год</span><strong>{{ kpis.previous_year_revenue|money }}</strong></div>
+    <div class="kpi"><span>Динамика к прошлому году</span><strong>{{ kpis.year_growth_rate|percent }}</strong></div>
+    <div class="kpi"><span>Всего в портфеле клиентов</span><strong>{{ kpis.total_clients }}</strong></div>
+    <div class="kpi"><span>Купили клиентов</span><strong>{{ kpis.bought_clients }}</strong></div>
+    <div class="kpi"><span>Средний чек</span><strong>{{ kpis.average_check|money }}</strong></div>
+  </section>
+
+  <section class="panel">
+    <h2>Доходы от клиентов</h2>
+    <p class="muted">Показаны только клиенты, у которых есть платежи. Клиенты без заказов доступны во вкладке «Клиенты».</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Название клиента</th>
+            <th class="number">Доход всего</th>
+            <th>Платежи по месяцам и годам</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in revenue_rows %}
+            <tr>
+              <td><a href="{% url 'client_detail' row.client.id %}">{{ row.client.name }}</a></td>
+              <td class="number">{{ row.total_revenue|money }}</td>
+              <td>
+                <details>
+                  <summary>Показать периоды с заказами</summary>
+                  <table style="margin-top: 10px;">
+                    <thead>
+                      <tr>
+                        <th>Месяц</th>
+                        <th class="number">Сумма</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for period in row.periods %}
+                        <tr>
+                          <td>{{ period.period|date:"m.Y" }}</td>
+                          <td class="number">{{ period.revenue|money }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </details>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="3" class="muted">Нет клиентов с платежами.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
