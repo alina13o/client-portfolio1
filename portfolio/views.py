@@ -307,7 +307,7 @@ def managers_admin(request):
     else:
         form = ManagerForm()
     managers = (
-        Manager.objects.all()
+        Manager.objects.filter(is_active=True)
         .annotate(clients_count=Count('client_assignments__client', distinct=True))
         .order_by('full_name')
     )

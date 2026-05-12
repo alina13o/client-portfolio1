@@ -18,6 +18,7 @@
         <button onclick="document.getElementById('edit-client-modal').showModal()">✎</button>
         <form method="post" action="{% url 'client_delete' client.id %}" onsubmit="return confirm('Удалить клиента?');">
           {% csrf_token %}
+          {% if user.is_staff or user.is_superuser %}<input type="hidden" name="confirm_orders" value="yes">{% endif %}
           <button style="color:#b42318;">Удалить</button>
         </form>
       </div>

@@ -5,3 +5,4 @@ pip install -r requirements.txt
 python manage.py collectstatic --noinput
 python manage.py migrate
 python manage.py ensure_default_users
+python manage.py prepare_demo_database

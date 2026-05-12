@@ -22,6 +22,7 @@ from portfolio import views as portfolio_views
 urlpatterns = [
     path('admin/managers/', portfolio_views.managers_admin, name='managers_admin'),
     path('admin/managers/<int:manager_id>/edit/', portfolio_views.manager_update, name='manager_update'),
+    path('admin/managers/<int:manager_id>/delete/', portfolio_views.manager_delete, name='manager_delete'),
     path('admin/', admin.site.urls),
     path('login/', auth_views.LoginView.as_view(template_name='portfolio/login.html'), name='login'),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
