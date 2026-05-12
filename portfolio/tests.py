@@ -7,7 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 import pandas as pd
 
-from portfolio.models import Client, ClientManagerAssignment, Manager, Order
+from portfolio.models import Client, ClientManagerAssignment, ClientComment, Manager, Order, OrderComment, OrderStage
 from portfolio.services.access import visible_clients_for_user
 from portfolio.services.analytics import Period, compare_periods
 from portfolio.services.importer import import_excel_workbook
@@ -91,3 +91,71 @@ class ExcelImportTests(TestCase):
         self.assertEqual(Client.objects.get(external_code='C-001').name, 'ООО Импорт')
         self.assertEqual(Order.objects.get().amount, Decimal('12345.67'))
         self.assertEqual(Manager.objects.get().full_name, 'Горбикова Мария Викторовна')
+
+
+class CrudValidationTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(username='owner', password='secret', is_staff=True, is_superuser=True)
+        self.client.force_login(self.owner)
+
+    def test_manager_age_saves_and_duplicate_email_returns_400(self):
+        response = self.client.post(
+            '/admin/managers/',
+            {
+                'full_name': 'Иванов Иван Иванович',
+                'email': 'ivanov@example.com',
+                'phone': '+7 900 100-10-10',
+                'age': 34,
+                'current_year_plan': '1000000',
+                'is_active': 'on',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        manager = Manager.objects.get(email='ivanov@example.com')
+        self.assertEqual(manager.age, 34)
+
+        duplicate = self.client.post(
+            '/admin/managers/',
+            {
+                'full_name': 'Дубль',
+                'email': 'ivanov@example.com',
+                'phone': '+7 900 100-10-11',
+                'age': 35,
+                'current_year_plan': '1000000',
+                'is_active': 'on',
+            },
+        )
+        self.assertEqual(duplicate.status_code, 400)
+
+    def test_client_duplicate_inn_returns_400(self):
+        manager = Manager.objects.create(full_name='Менеджер', email='manager@example.com')
+        payload = {
+            'name': 'ООО Проверка',
+            'inn': '7700000001',
+            'address': 'г. Москва, ул. Тестовая, д. 1',
+            'phone': '+7 900 100-10-12',
+            'email': 'client@example.com',
+            'sales_channel': 'Сайт',
+            'manager': manager.id,
+        }
+        self.assertEqual(self.client.post('/clients/new/', payload).status_code, 302)
+        payload['name'] = 'ООО Дубль'
+        self.assertEqual(self.client.post('/clients/new/', payload).status_code, 400)
+
+    def test_comment_and_stage_endpoints_save(self):
+        client = Client.objects.create(name='ООО Проект', inn='7700000002', address='г. Москва')
+        order = Order.objects.create(client=client, order_date=date(2026, 5, 1), amount=Decimal('10000.00'))
+        stage = OrderStage.objects.create(order=order, title='Новый', position=1)
+
+        response = self.client.post(f'/clients/{client.id}/comments/new/', {'text': 'Комментарий клиента'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ClientComment.objects.get(client=client).text, 'Комментарий клиента')
+
+        response = self.client.post(f'/orders/{order.id}/comments/new/', {'text': 'Комментарий заказа'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(OrderComment.objects.get(order=order).text, 'Комментарий заказа')
+
+        response = self.client.post(f'/orders/{order.id}/stages/{stage.id}/toggle/', {'is_done': 'true'})
+        self.assertEqual(response.status_code, 200)
+        stage.refresh_from_db()
+        self.assertTrue(stage.is_done)

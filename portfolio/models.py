@@ -29,6 +29,13 @@ class Manager(TimestampedModel):
     is_active = models.BooleanField(default=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['email'],
+                condition=~Q(email=''),
+                name='uniq_manager_email_not_blank',
+            ),
+        ]
         indexes = [
             models.Index(fields=['full_name']),
             models.Index(fields=['is_active']),
@@ -58,6 +65,18 @@ class Client(TimestampedModel):
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.ACTIVE)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['inn'],
+                condition=~Q(inn=''),
+                name='uniq_client_inn_not_blank',
+            ),
+            models.UniqueConstraint(
+                fields=['name', 'address'],
+                condition=Q(inn=''),
+                name='uniq_client_name_address_when_inn_blank',
+            ),
+        ]
         indexes = [
             models.Index(fields=['name']),
             models.Index(fields=['inn']),

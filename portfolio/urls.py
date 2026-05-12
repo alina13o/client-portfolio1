@@ -27,9 +27,12 @@ urlpatterns = [
     path('orders/<int:order_id>/stages/<int:stage_id>/delete/', views.order_stage_delete, name='order_stage_delete'),
     path('api/dashboard/charts/', views.dashboard_charts_api, name='dashboard_charts_api'),
     path('api/managers/<int:manager_id>/summary/', views.manager_summary_api, name='manager_summary_api'),
+    path('api/validate/manager-email/', views.validate_manager_email_api, name='validate_manager_email_api'),
+    path('api/validate/client/', views.validate_client_api, name='validate_client_api'),
     path('api/notifications/', views.notifications_api, name='notifications_api'),
     path('admin/managers/', views.managers_admin, name='managers_admin'),
     path('admin/managers/<int:manager_id>/edit/', views.manager_update, name='manager_update'),
+    path('admin/managers/<int:manager_id>/delete/', views.manager_delete, name='manager_delete'),
     path('analytics/', views.analytics, name='analytics'),
     path('upload/', views.upload_excel, name='upload_excel'),
 ]

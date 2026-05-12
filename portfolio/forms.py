@@ -68,10 +68,31 @@ class ClientForm(forms.ModelForm):
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
+        self.fields['inn'].widget.attrs.update({'data-validate-client': 'inn'})
+        self.fields['name'].widget.attrs.update({'data-validate-client': 'name'})
+        self.fields['address'].widget.attrs.update({'data-validate-client': 'address'})
         self.fields['manager'].queryset = Manager.objects.filter(is_active=True)
         if user and not user.is_staff and not user.is_superuser:
             self.fields['manager'].required = False
             self.fields['manager'].widget = forms.HiddenInput()
+
+    def clean_inn(self):
+        return (self.cleaned_data.get('inn') or '').strip()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        inn = (cleaned_data.get('inn') or '').strip()
+        name = (cleaned_data.get('name') or '').strip()
+        address = (cleaned_data.get('address') or '').strip()
+        queryset = Client.objects.all()
+        if self.instance and self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if inn and queryset.filter(inn=inn).exists():
+            self.add_error('inn', 'Клиент с таким ИНН уже существует.')
+        if not inn and name and address and queryset.filter(name__iexact=name, address__iexact=address).exists():
+            self.add_error('name', 'Клиент с таким названием и адресом уже существует.')
+            self.add_error('address', 'Клиент с таким названием и адресом уже существует.')
+        return cleaned_data
 
     def save(self, commit=True):
         client = super().save(commit=commit)
@@ -120,6 +141,21 @@ class ManagerForm(forms.ModelForm):
             'current_year_plan': 'План на год',
             'is_active': 'Активен',
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['email'].widget.attrs.update({'data-validate-manager-email': '1'})
+
+    def clean_email(self):
+        email = (self.cleaned_data.get('email') or '').strip().lower()
+        if not email:
+            return email
+        queryset = Manager.objects.filter(email__iexact=email)
+        if self.instance and self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise forms.ValidationError('Менеджер с таким email уже существует.')
+        return email
 
     def save(self, commit=True):
         manager = super().save(commit=False)

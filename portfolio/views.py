@@ -6,7 +6,7 @@ from django.contrib import messages
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
 from django.db.models import Case, DecimalField, F, Value, When
-from django.http import HttpResponseForbidden, JsonResponse
+from django.http import HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
@@ -196,6 +196,7 @@ def client_detail(request, client_id):
             'client_form': ClientForm(instance=client, user=request.user),
             'fact_form': ClientPeriodFactForm(),
             'comments': client.comments.select_related('author')[:50],
+            'active_projects': _active_projects_for_client(client),
             'can_delete_orders': is_owner(request.user),
         },
     )
@@ -210,8 +211,13 @@ def client_create(request):
         client = form.save()
         messages.success(request, 'Клиент создан.')
         return redirect('client_detail', client_id=client.id)
-    messages.error(request, 'Проверьте поля клиента.')
-    return render(request, 'portfolio/clients.html', {'clients': visible_clients_for_user(request.user)[:50], 'client_form': form, 'query': ''})
+    messages.error(request, _form_error_text(form, 'Клиент с такими данными уже существует.'))
+    return render(
+        request,
+        'portfolio/clients.html',
+        {'clients': visible_clients_for_user(request.user)[:50], 'client_form': form, 'query': '', 'sort': 'name', 'direction': 'asc'},
+        status=400,
+    )
 
 
 @login_required
@@ -224,7 +230,8 @@ def client_update(request, client_id):
         form.save()
         messages.success(request, 'Клиент сохранен.')
     else:
-        messages.error(request, 'Не удалось сохранить клиента.')
+        messages.error(request, _form_error_text(form, 'Не удалось сохранить клиента.'))
+        return client_detail(request, client.id)
     return redirect('client_detail', client_id=client.id)
 
 
@@ -296,6 +303,7 @@ def managers_admin(request):
             form.save()
             messages.success(request, 'Менеджер сохранен.')
             return redirect('managers_admin')
+        messages.error(request, _form_error_text(form, 'Не удалось сохранить менеджера.'))
     else:
         form = ManagerForm()
     managers = (
@@ -303,7 +311,7 @@ def managers_admin(request):
         .annotate(clients_count=Count('client_assignments__client', distinct=True))
         .order_by('full_name')
     )
-    return render(request, 'portfolio/managers_admin.html', {'managers': managers, 'form': form})
+    return render(request, 'portfolio/managers_admin.html', {'managers': managers, 'form': form}, status=400 if form.errors else 200)
 
 
 @login_required
@@ -316,7 +324,58 @@ def manager_update(request, manager_id):
         if form.is_valid():
             form.save()
             messages.success(request, 'Менеджер обновлен.')
+        else:
+            messages.error(request, _form_error_text(form, 'Не удалось обновить менеджера.'))
+            return managers_admin(request)
     return redirect('managers_admin')
+
+
+@login_required
+@require_POST
+def manager_delete(request, manager_id):
+    if not is_owner(request.user):
+        return redirect('manager_dashboard')
+    manager = get_object_or_404(Manager, id=manager_id)
+    if manager.client_assignments.exists() or manager.period_facts.exists():
+        manager.is_active = False
+        manager.save(update_fields=['is_active', 'updated_at'])
+        messages.success(request, 'У менеджера есть история портфеля, поэтому он деактивирован.')
+    else:
+        manager.delete()
+        messages.success(request, 'Менеджер удален.')
+    return redirect('managers_admin')
+
+
+@login_required
+@require_GET
+def validate_manager_email_api(request):
+    email = (request.GET.get('email') or '').strip()
+    exclude_id = request.GET.get('exclude_id')
+    queryset = Manager.objects.filter(email__iexact=email) if email else Manager.objects.none()
+    if exclude_id:
+        queryset = queryset.exclude(id=exclude_id)
+    return JsonResponse({'available': not queryset.exists(), 'message': '' if not queryset.exists() else 'Занято'})
+
+
+@login_required
+@require_GET
+def validate_client_api(request):
+    inn = (request.GET.get('inn') or '').strip()
+    name = (request.GET.get('name') or '').strip()
+    address = (request.GET.get('address') or '').strip()
+    exclude_id = request.GET.get('exclude_id')
+    queryset = Client.objects.all()
+    if exclude_id:
+        queryset = queryset.exclude(id=exclude_id)
+    exists = False
+    message = ''
+    if inn:
+        exists = queryset.filter(inn=inn).exists()
+        message = 'Клиент с таким ИНН уже существует.' if exists else ''
+    elif name and address:
+        exists = queryset.filter(name__iexact=name, address__iexact=address).exists()
+        message = 'Клиент с таким названием и адресом уже существует.' if exists else ''
+    return JsonResponse({'available': not exists, 'message': message or ('Занято' if exists else '')})
 
 
 @login_required
@@ -755,18 +814,32 @@ def _active_orders_for_manager(manager):
 
 
 def _active_orders_queryset(queryset):
-    orders = (
-        queryset.exclude(status__in=[Order.Status.COMPLETED, Order.Status.CANCELLED, Order.Status.CANCELLED_AFTER_PRODUCTION])
+    candidate_orders = (
+        queryset.exclude(status__in=[Order.Status.CANCELLED, Order.Status.CANCELLED_AFTER_PRODUCTION])
         .select_related('client')
         .prefetch_related('stages', 'comments__author', 'client__manager_assignments__manager')
         .order_by('-created_at')
     )
-    for order in orders:
+    orders = []
+    for order in candidate_orders:
         _ensure_default_stages(order)
         order.progress = _order_progress(order)
         order.current_stage = _current_order_stage(order)
         order.manager = _manager_for_order(order)
+        if _is_active_order(order):
+            orders.append(order)
     return orders
+
+
+def _active_projects_for_client(client):
+    return _active_orders_queryset(Order.objects.filter(client=client).order_by('-order_date', '-id'))
+
+
+def _is_active_order(order):
+    stage = getattr(order, 'current_stage', None) or _current_order_stage(order)
+    if not stage:
+        return order.status not in [Order.Status.CANCELLED, Order.Status.CANCELLED_AFTER_PRODUCTION]
+    return stage.title.strip().lower() not in {'закрыт', 'отгружен'}
 
 
 def _ensure_default_stages(order):
@@ -875,3 +948,10 @@ def _last_client_order_date(client):
 
 def _format_date(value):
     return value.strftime('%d.%m.%Y') if value else ''
+
+
+def _form_error_text(form, fallback):
+    for errors in form.errors.values():
+        if errors:
+            return errors[0]
+    return fallback

@@ -31,6 +31,25 @@
     {% if client.internal_comment %}<p><strong>Комментарий:</strong> {{ client.internal_comment }}</p>{% endif %}
   </section>
 
+  <section class="panel">
+    <h2>Активные проекты</h2>
+    {% for order in active_projects %}
+      <article class="kpi" style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;">
+          <div>
+            <strong>Заказ #{{ order.id }}</strong>
+            <p class="muted">Сумма: {{ order.amount|money }} · Дата: {{ order.order_date|date:"d.m.Y" }}</p>
+          </div>
+          <span class="stage-badge warning">{{ order.current_stage.title|default:"Нет стадий" }}</span>
+        </div>
+        <div class="progress" style="width:100%;margin-top:10px;"><span style="width:{{ order.progress.percent }}%"></span></div>
+        <p class="muted">{{ order.progress.done }}/{{ order.progress.total }} стадий выполнено</p>
+      </article>
+    {% empty %}
+      <p class="muted">Нет активных проектов.</p>
+    {% endfor %}
+  </section>
+
   <section class="panel" id="comments">
     <h2>Комментарии</h2>
     <form id="client-comment-form" style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;">
@@ -53,7 +72,7 @@
 
   <section class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center;">
-      <h2>Заказы по годам и месяцам</h2>
+      <h2>История всех заказов</h2>
       <button class="primary" style="max-width:180px;" onclick="document.getElementById('fact-modal').showModal()">+ Добавить заказ</button>
     </div>
     {% regroup monthly_revenue by period.year as years %}
@@ -127,6 +146,26 @@
       const list = document.getElementById('client-comments');
       const csrf = form.querySelector('[name=csrfmiddlewaretoken]').value;
       const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
+      const validateClient = async (scope) => {
+        const inn = scope.querySelector('[name="inn"]');
+        const name = scope.querySelector('[name="name"]');
+        const address = scope.querySelector('[name="address"]');
+        if (!inn || !name || !address) return;
+        const params = new URLSearchParams({ inn: inn.value.trim(), name: name.value.trim(), address: address.value.trim(), exclude_id: '{{ client.id }}' });
+        const response = await fetch(`/api/validate/client/?${params}`);
+        const data = await response.json();
+        [inn, name, address].forEach((field) => field.style.borderColor = data.available ? 'var(--line)' : '#ff3b30');
+        let hint = scope.querySelector('.client-unique-hint');
+        if (!hint) {
+          hint = document.createElement('small');
+          hint.className = 'client-unique-hint';
+          hint.style.display = 'block';
+          hint.style.color = '#ff3b30';
+          address.insertAdjacentElement('afterend', hint);
+        }
+        hint.textContent = data.available ? '' : data.message;
+      };
+      document.querySelectorAll('[data-validate-client]').forEach((field) => field.addEventListener('blur', () => validateClient(field.closest('form'))));
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const data = new FormData(form);

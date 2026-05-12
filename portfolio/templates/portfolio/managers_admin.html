@@ -9,20 +9,32 @@
   <section class="panel">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ФИО</th><th>Email</th><th>Возраст</th><th>Клиентов</th><th>Активен</th><th></th></tr></thead>
+        <thead><tr><th>ФИО</th><th>Email</th><th>Телефон</th><th>Возраст</th><th>Клиентов</th><th>Активен</th><th>Действия</th></tr></thead>
         <tbody>
           {% for manager in managers %}
             <tr>
-              <form method="post" action="{% url 'manager_update' manager.id %}">
-                {% csrf_token %}
-                <td><input name="full_name" value="{{ manager.full_name }}"></td>
-                <td><input name="email" value="{{ manager.email }}"></td>
-                <td><input name="age" type="number" value="{{ manager.age|default:'' }}"></td>
-                <input type="hidden" name="current_year_plan" value="{{ manager.current_year_plan }}">
-                <td>{{ manager.clients_count }}</td>
-                <td><input name="is_active" type="checkbox" {% if manager.is_active %}checked{% endif %}></td>
-                <td><button type="submit">Сохранить</button></td>
-              </form>
+              <td>
+                <form id="manager-edit-{{ manager.id }}" method="post" action="{% url 'manager_update' manager.id %}">{% csrf_token %}</form>
+                <input form="manager-edit-{{ manager.id }}" name="full_name" value="{{ manager.full_name }}">
+              </td>
+              <td>
+                <input form="manager-edit-{{ manager.id }}" name="email" value="{{ manager.email }}" data-validate-manager-email data-exclude-id="{{ manager.id }}">
+                <small class="field-hint muted"></small>
+              </td>
+              <td><input form="manager-edit-{{ manager.id }}" name="phone" value="{{ manager.phone }}"></td>
+              <td><input form="manager-edit-{{ manager.id }}" name="age" type="number" value="{{ manager.age|default:'' }}"></td>
+              <td>
+                <input form="manager-edit-{{ manager.id }}" type="hidden" name="current_year_plan" value="{{ manager.current_year_plan }}">
+                {{ manager.clients_count }}
+              </td>
+              <td><input form="manager-edit-{{ manager.id }}" name="is_active" type="checkbox" {% if manager.is_active %}checked{% endif %}></td>
+              <td>
+                <button form="manager-edit-{{ manager.id }}" type="submit">Сохранить</button>
+                <form method="post" action="{% url 'manager_delete' manager.id %}" onsubmit="return confirm('Удалить или деактивировать менеджера?');">
+                  {% csrf_token %}
+                  <button style="color:#b42318;">Удалить</button>
+                </form>
+              </td>
             </tr>
           {% endfor %}
         </tbody>
@@ -41,4 +53,28 @@
       </div>
     </form>
   </dialog>
+  <script>
+    (() => {
+      const mark = (input, ok, message) => {
+        input.style.borderColor = ok ? 'var(--line)' : '#ff3b30';
+        const hint = input.parentElement.querySelector('.field-hint') || input.closest('p')?.querySelector('.field-hint');
+        if (hint) {
+          hint.textContent = ok ? '' : message;
+          hint.style.color = '#ff3b30';
+        } else if (!ok) {
+          input.insertAdjacentHTML('afterend', `<small class="field-hint" style="color:#ff3b30;display:block;margin-top:4px;">${message}</small>`);
+        }
+      };
+      document.querySelectorAll('[data-validate-manager-email]').forEach((input) => {
+        input.addEventListener('blur', async () => {
+          if (!input.value.trim()) return;
+          const params = new URLSearchParams({ email: input.value.trim() });
+          if (input.dataset.excludeId) params.set('exclude_id', input.dataset.excludeId);
+          const response = await fetch(`/api/validate/manager-email/?${params}`);
+          const data = await response.json();
+          mark(input, data.available, data.message || 'Занято');
+        });
+      });
+    })();
+  </script>
 {% endblock %}

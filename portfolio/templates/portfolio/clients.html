@@ -90,6 +90,30 @@
           render((await response.json()).results);
         }, 300);
       });
+      const validateClient = async (scope) => {
+        const inn = scope.querySelector('[name="inn"]');
+        const name = scope.querySelector('[name="name"]');
+        const address = scope.querySelector('[name="address"]');
+        if (!inn || !name || !address) return;
+        const params = new URLSearchParams({ inn: inn.value.trim(), name: name.value.trim(), address: address.value.trim() });
+        const response = await fetch(`/api/validate/client/?${params}`);
+        const data = await response.json();
+        [inn, name, address].forEach((field) => field.style.borderColor = data.available ? 'var(--line)' : '#ff3b30');
+        let hint = scope.querySelector('.client-unique-hint');
+        if (!hint) {
+          hint = document.createElement('small');
+          hint.className = 'client-unique-hint';
+          hint.style.display = 'block';
+          hint.style.color = '#ff3b30';
+          address.insertAdjacentElement('afterend', hint);
+        }
+        hint.textContent = data.available ? '' : data.message;
+      };
+      document.querySelectorAll('form').forEach((form) => {
+        if (form.querySelector('[data-validate-client]')) {
+          form.querySelectorAll('[data-validate-client]').forEach((field) => field.addEventListener('blur', () => validateClient(form)));
+        }
+      });
     })();
   </script>
 {% endblock %}
