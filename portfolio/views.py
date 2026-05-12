@@ -1,18 +1,31 @@
-from datetime import date, timedelta
+from calendar import monthrange
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.db.models import Case, DecimalField, F, Value, When
+from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import Coalesce
 import re
 
 from portfolio.forms import ClientForm, ClientPeriodFactForm, ExcelImportForm, ManagerForm, PeriodComparisonForm
-from portfolio.models import Client, ClientManagerAssignment, ClientPeriodFact, Manager, Order
+from portfolio.models import (
+    Client,
+    ClientComment,
+    ClientManagerAssignment,
+    ClientPeriodFact,
+    Manager,
+    Notification,
+    Order,
+    OrderComment,
+    OrderStage,
+)
 from portfolio.services.access import clients_for_manager, is_owner, manager_for_user, visible_clients_for_user
 from portfolio.services.analytics import (
     Period,
@@ -27,6 +40,19 @@ from portfolio.services.analytics import (
     portfolio_kpis_for_owner,
 )
 from portfolio.services.importer import import_excel_workbook
+
+
+DEFAULT_ORDER_STAGES = [
+    'Новый',
+    'КП отправлено',
+    'Согласование',
+    'Договор',
+    'Предоплата',
+    'В производстве',
+    'Готов к отгрузке',
+    'Отгружен',
+    'Закрыт',
+]
 
 
 @login_required
@@ -49,8 +75,8 @@ def manager_dashboard(request):
         'portfolio/manager_dashboard.html',
         {
             'manager': manager,
-            'kpis': portfolio_kpis_for_manager(manager),
-            'revenue_rows': client_revenue_rows(clients_qs),
+            'chart_api_url': f'/api/dashboard/charts/?manager_id={manager.id}',
+            'active_orders': _active_orders_for_user(request.user)[:8],
             'readonly': False,
         },
     )
@@ -70,6 +96,7 @@ def owner_dashboard(request):
             'comparison': compare_periods_for_owner(period_1, period_2),
             'ranking': manager_ranking(period_2),
             'form': form,
+            'chart_api_url': '/api/dashboard/charts/',
         },
     )
 
@@ -86,8 +113,8 @@ def owner_manager_detail(request, manager_id):
         'portfolio/manager_dashboard.html',
         {
             'manager': manager,
-            'kpis': portfolio_kpis_for_manager(manager),
-            'revenue_rows': client_revenue_rows(clients_qs),
+            'chart_api_url': f'/api/dashboard/charts/?manager_id={manager.id}',
+            'active_orders': _active_orders_for_manager(manager)[:8],
             'readonly': True,
         },
     )
@@ -96,13 +123,22 @@ def owner_manager_detail(request, manager_id):
 @login_required
 def clients(request):
     query = request.GET.get('q', '').strip()
-    clients_qs = _search_clients(visible_clients_for_user(request.user), query)[:50]
+    sort = request.GET.get('sort', 'name')
+    direction = request.GET.get('direction', 'asc')
+    clients_qs = list(_client_table_queryset(request.user, query, sort, direction)[:80])
+    for client in clients_qs:
+        assignment = current_manager_for_client(client)
+        client.table_manager = assignment.manager if assignment else None
+        client.table_last_comment = _latest_client_comment_text(client)
+        client.table_last_order = _last_client_order_date(client)
     return render(
         request,
         'portfolio/clients.html',
         {
             'clients': clients_qs,
             'query': query,
+            'sort': sort,
+            'direction': direction,
             'client_form': ClientForm(user=request.user),
         },
     )
@@ -113,12 +149,19 @@ def client_search(request):
     query = request.GET.get('q', '').strip()
     rows = []
     for client in _search_clients(visible_clients_for_user(request.user), query)[:20]:
+        assignment = current_manager_for_client(client)
         rows.append(
             {
                 'id': client.id,
                 'name': client.name,
                 'inn': client.inn,
+                'phone': client.phone,
+                'email': client.email,
                 'address': client.address,
+                'manager': assignment.manager.full_name if assignment else '',
+                'manager_id': assignment.manager_id if assignment else None,
+                'last_comment': _latest_client_comment_text(client),
+                'last_order': _format_date(_last_client_order_date(client)),
                 'highlight': _highlight_match(client.name, query),
                 'url': f'/clients/{client.id}/',
             }
@@ -139,6 +182,8 @@ def client_detail(request, client_id):
         'last_order': order_totals['last_order'] or last_monthly,
     }
     assignment = current_manager_for_client(client)
+    notifications = Notification.objects.filter(recipient=request.user, client=client, is_read=False)
+    notifications.update(is_read=True, read_at=timezone.now())
     return render(
         request,
         'portfolio/client_detail.html',
@@ -150,6 +195,7 @@ def client_detail(request, client_id):
             'monthly_revenue': monthly_revenue,
             'client_form': ClientForm(instance=client, user=request.user),
             'fact_form': ClientPeriodFactForm(),
+            'comments': client.comments.select_related('author')[:50],
             'can_delete_orders': is_owner(request.user),
         },
     )
@@ -274,6 +320,154 @@ def manager_update(request, manager_id):
 
 
 @login_required
+def active_orders(request):
+    orders = _active_orders_for_user(request.user)
+    Notification.objects.filter(recipient=request.user, kind=Notification.Kind.ORDER_COMMENT, is_read=False).update(
+        is_read=True,
+        read_at=timezone.now(),
+    )
+    return render(request, 'portfolio/active_orders.html', {'orders': orders})
+
+
+@login_required
+@require_GET
+def dashboard_charts_api(request):
+    manager_id = request.GET.get('manager_id')
+    if manager_id:
+        manager = get_object_or_404(Manager, id=manager_id)
+        if not is_owner(request.user) and manager_for_user(request.user) != manager:
+            return HttpResponseForbidden('Недостаточно прав.')
+        client_ids = list(clients_for_manager(manager).values_list('id', flat=True))
+    else:
+        client_ids = list(visible_clients_for_user(request.user).values_list('id', flat=True))
+    return JsonResponse({'charts': _dashboard_chart_payload(client_ids)})
+
+
+@login_required
+@require_POST
+def client_comment_create(request, client_id):
+    client = get_object_or_404(visible_clients_for_user(request.user), id=client_id)
+    text = request.POST.get('text', '').strip()
+    if not text:
+        return JsonResponse({'error': 'Комментарий пустой.'}, status=400)
+    comment = ClientComment.objects.create(client=client, author=request.user, text=text)
+    _notify_client_comment(request.user, client, text)
+    return JsonResponse({'comment': _comment_payload(comment)})
+
+
+@login_required
+@require_POST
+def client_comment_delete(request, client_id, comment_id):
+    client = get_object_or_404(visible_clients_for_user(request.user), id=client_id)
+    comment = get_object_or_404(ClientComment, id=comment_id, client=client)
+    if not is_owner(request.user) and comment.author_id != request.user.id:
+        return HttpResponseForbidden('Удалить может автор или владелец.')
+    comment.delete()
+    return JsonResponse({'ok': True})
+
+
+@login_required
+@require_POST
+def order_comment_create(request, order_id):
+    order = _visible_order_or_404(request.user, order_id)
+    text = request.POST.get('text', '').strip()
+    if not text:
+        return JsonResponse({'error': 'Комментарий пустой.'}, status=400)
+    comment = OrderComment.objects.create(order=order, author=request.user, text=text)
+    _notify_order_comment(request.user, order, text)
+    return JsonResponse({'comment': _comment_payload(comment)})
+
+
+@login_required
+@require_POST
+def order_comment_delete(request, order_id, comment_id):
+    order = _visible_order_or_404(request.user, order_id)
+    comment = get_object_or_404(OrderComment, id=comment_id, order=order)
+    if not is_owner(request.user) and comment.author_id != request.user.id:
+        return HttpResponseForbidden('Удалить может автор или владелец.')
+    comment.delete()
+    return JsonResponse({'ok': True})
+
+
+@login_required
+@require_POST
+def order_stage_toggle(request, order_id, stage_id):
+    order = _visible_order_or_404(request.user, order_id)
+    stage = get_object_or_404(OrderStage, id=stage_id, order=order)
+    is_done = request.POST.get('is_done') == 'true'
+    stage.is_done = is_done
+    stage.completed_at = timezone.now() if is_done else None
+    stage.save(update_fields=['is_done', 'completed_at', 'updated_at'])
+    return JsonResponse({'stage': _stage_payload(stage), 'progress': _order_progress(order)})
+
+
+@login_required
+@require_POST
+def order_stage_create(request, order_id):
+    order = _visible_order_or_404(request.user, order_id)
+    title = request.POST.get('title', '').strip()
+    if not title:
+        return JsonResponse({'error': 'Название стадии пустое.'}, status=400)
+    position = order.stages.aggregate(max_position=Max('position'))['max_position']
+    stage = OrderStage.objects.create(order=order, title=title, position=(position or 0) + 1)
+    return JsonResponse({'stage': _stage_payload(stage), 'progress': _order_progress(order)})
+
+
+@login_required
+@require_POST
+def order_stage_delete(request, order_id, stage_id):
+    order = _visible_order_or_404(request.user, order_id)
+    stage = get_object_or_404(OrderStage, id=stage_id, order=order)
+    stage.delete()
+    return JsonResponse({'ok': True, 'progress': _order_progress(order)})
+
+
+@login_required
+@require_GET
+def manager_summary_api(request, manager_id):
+    manager = get_object_or_404(Manager, id=manager_id)
+    if not is_owner(request.user) and manager_for_user(request.user) != manager:
+        return HttpResponseForbidden('Недостаточно прав.')
+    clients = clients_for_manager(manager)
+    client_ids = list(clients.values_list('id', flat=True))
+    facts_revenue = ClientPeriodFact.objects.filter(client_id__in=client_ids).aggregate(value=Coalesce(Sum('revenue'), Decimal('0')))['value']
+    orders_revenue = Order.objects.filter(client_id__in=client_ids).exclude(status=Order.Status.CANCELLED).aggregate(value=Coalesce(Sum('amount'), Decimal('0')))['value']
+    return JsonResponse(
+        {
+            'id': manager.id,
+            'full_name': manager.full_name,
+            'email': manager.email,
+            'phone': manager.phone,
+            'age': manager.age,
+            'clients_count': clients.count(),
+            'revenue_total': float(facts_revenue + orders_revenue),
+            'portfolio_url': f'/owner/dashboard/manager/{manager.id}/' if is_owner(request.user) else '/manager/dashboard/',
+        }
+    )
+
+
+@login_required
+@require_GET
+def notifications_api(request):
+    notifications = Notification.objects.filter(recipient=request.user, is_read=False)[:20]
+    return JsonResponse(
+        {
+            'count': notifications.count(),
+            'items': [
+                {
+                    'id': item.id,
+                    'kind': item.kind,
+                    'text': item.comment_text,
+                    'url': _notification_url(item),
+                    'created_at': item.created_at.strftime('%d.%m.%Y %H:%M'),
+                }
+                for item in notifications
+            ],
+        }
+    )
+
+
+@login_required
 def analytics(request):
     period = _chart_period(request)
     clients = visible_clients_for_user(request.user)
@@ -296,6 +490,31 @@ def analytics(request):
             'manager': manager,
         },
     )
+
+
+def _client_table_queryset(user, query, sort, direction):
+    sort_map = {
+        'name': 'name',
+        'inn': 'inn',
+        'phone': 'phone',
+        'email': 'email',
+        'manager': 'manager_assignments__manager__full_name',
+        'comment': 'comments__created_at',
+        'last_order': 'last_order',
+    }
+    queryset = (
+        _search_clients(visible_clients_for_user(user), query)
+        .annotate(
+            last_order=Max('orders__order_date'),
+            last_fact=Max('period_facts__period_start'),
+        )
+        .prefetch_related('manager_assignments__manager', 'comments')
+        .distinct()
+    )
+    field = sort_map.get(sort, 'name')
+    if direction == 'desc':
+        field = f'-{field}'
+    return queryset.order_by(field, 'name')
 
 
 @login_required
@@ -436,3 +655,223 @@ def _top_clients_chart(facts):
         }
         for row in rows
     ]
+
+
+def _dashboard_chart_payload(client_ids):
+    monthly = {}
+    fact_rows = (
+        ClientPeriodFact.objects.filter(client_id__in=client_ids, revenue__gt=0)
+        .values('period_start')
+        .annotate(
+            revenue=Coalesce(Sum('revenue'), Decimal('0')),
+            orders=Coalesce(Sum('orders_count'), 0),
+            active_clients=Count('client', distinct=True),
+        )
+        .order_by('period_start')
+    )
+    for row in fact_rows:
+        key = row['period_start'].replace(day=1)
+        monthly.setdefault(key, {'revenue': Decimal('0'), 'orders': 0, 'clients': set()})
+        monthly[key]['revenue'] += row['revenue']
+        monthly[key]['orders'] += row['orders'] or row['active_clients']
+        monthly[key]['clients_count_from_facts'] = row['active_clients']
+
+    order_rows = (
+        Order.objects.filter(client_id__in=client_ids)
+        .exclude(status=Order.Status.CANCELLED)
+        .values('order_date')
+        .annotate(revenue=Coalesce(Sum('amount'), Decimal('0')), orders=Count('id'), active_clients=Count('client', distinct=True))
+        .order_by('order_date')
+    )
+    for row in order_rows:
+        key = row['order_date'].replace(day=1)
+        monthly.setdefault(key, {'revenue': Decimal('0'), 'orders': 0, 'clients': set()})
+        monthly[key]['revenue'] += row['revenue']
+        monthly[key]['orders'] += row['orders']
+        monthly[key]['clients_count_from_orders'] = row['active_clients']
+
+    if not monthly:
+        return {'labels': [], 'revenue': [], 'active_clients': [], 'average_check': [], 'growth_rate': []}
+
+    start = min(monthly)
+    end = max(max(monthly), timezone.localdate().replace(day=1))
+    months = []
+    current = start
+    while current <= end:
+        months.append(current)
+        current = _add_month(current)
+
+    labels = [_month_label(month) for month in months]
+    revenue_values = []
+    active_values = []
+    average_values = []
+    growth_values = []
+    previous_revenue = None
+    for month in months:
+        item = monthly.get(month, {'revenue': Decimal('0'), 'orders': 0})
+        revenue = item['revenue']
+        orders = item['orders'] or 0
+        active = item.get('clients_count_from_orders') or item.get('clients_count_from_facts') or 0
+        average = revenue / orders if orders else Decimal('0')
+        if previous_revenue is None or previous_revenue == 0:
+            growth = Decimal('0')
+        else:
+            growth = ((revenue - previous_revenue) / previous_revenue) * Decimal('100')
+        previous_revenue = revenue
+        revenue_values.append(float(revenue))
+        active_values.append(active)
+        average_values.append(float(average))
+        growth_values.append(float(growth))
+
+    return {
+        'labels': labels,
+        'revenue': revenue_values,
+        'active_clients': active_values,
+        'average_check': average_values,
+        'growth_rate': growth_values,
+    }
+
+
+def _add_month(value):
+    if value.month == 12:
+        return date(value.year + 1, 1, 1)
+    return date(value.year, value.month + 1, 1)
+
+
+def _month_label(value):
+    months = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    return f'{months[value.month - 1]} {value.year}'
+
+
+def _active_orders_for_user(user):
+    if is_owner(user):
+        return _active_orders_queryset(Order.objects.all())
+    clients = visible_clients_for_user(user)
+    return _active_orders_queryset(Order.objects.filter(client__in=clients))
+
+
+def _active_orders_for_manager(manager):
+    return _active_orders_queryset(Order.objects.filter(client__in=clients_for_manager(manager)))
+
+
+def _active_orders_queryset(queryset):
+    orders = (
+        queryset.exclude(status__in=[Order.Status.COMPLETED, Order.Status.CANCELLED, Order.Status.CANCELLED_AFTER_PRODUCTION])
+        .select_related('client')
+        .prefetch_related('stages', 'comments__author', 'client__manager_assignments__manager')
+        .order_by('-created_at')
+    )
+    for order in orders:
+        _ensure_default_stages(order)
+        order.progress = _order_progress(order)
+        order.current_stage = _current_order_stage(order)
+        order.manager = _manager_for_order(order)
+    return orders
+
+
+def _ensure_default_stages(order):
+    if order.stages.exists():
+        return
+    OrderStage.objects.bulk_create(
+        [OrderStage(order=order, title=title, position=index) for index, title in enumerate(DEFAULT_ORDER_STAGES, start=1)]
+    )
+
+
+def _order_progress(order):
+    stages = list(order.stages.all())
+    total = len(stages)
+    done = sum(1 for stage in stages if stage.is_done)
+    return {'done': done, 'total': total, 'percent': int((done / total) * 100) if total else 0}
+
+
+def _current_order_stage(order):
+    stages = list(order.stages.all())
+    for stage in stages:
+        if not stage.is_done:
+            return stage
+    return stages[-1] if stages else None
+
+
+def _manager_for_order(order):
+    return current_manager_for_client(order.client)
+
+
+def _visible_order_or_404(user, order_id):
+    queryset = Order.objects.select_related('client').prefetch_related('stages', 'comments')
+    if not is_owner(user):
+        queryset = queryset.filter(client__in=visible_clients_for_user(user))
+    order = get_object_or_404(queryset, id=order_id)
+    _ensure_default_stages(order)
+    return order
+
+
+def _stage_payload(stage):
+    return {
+        'id': stage.id,
+        'title': stage.title,
+        'position': stage.position,
+        'is_done': stage.is_done,
+        'completed_at': stage.completed_at.strftime('%d.%m.%Y %H:%M') if stage.completed_at else '',
+    }
+
+
+def _comment_payload(comment):
+    author = comment.author
+    return {
+        'id': comment.id,
+        'author': author.get_full_name() or author.username if author else 'Пользователь удален',
+        'role': 'Owner' if author and is_owner(author) else 'Менеджер',
+        'text': comment.text,
+        'created_at': comment.created_at.strftime('%d.%m.%Y %H:%M'),
+    }
+
+
+def _notify_client_comment(actor, client, text):
+    assignment = current_manager_for_client(client)
+    if is_owner(actor) and assignment and assignment.manager.user and assignment.manager.user_id != actor.id:
+        Notification.objects.create(
+            recipient=assignment.manager.user,
+            actor=actor,
+            kind=Notification.Kind.CLIENT_COMMENT,
+            client=client,
+            comment_text=text[:500],
+        )
+
+
+def _notify_order_comment(actor, order, text):
+    assignment = current_manager_for_client(order.client)
+    if is_owner(actor) and assignment and assignment.manager.user and assignment.manager.user_id != actor.id:
+        Notification.objects.create(
+            recipient=assignment.manager.user,
+            actor=actor,
+            kind=Notification.Kind.ORDER_COMMENT,
+            client=order.client,
+            order=order,
+            comment_text=text[:500],
+        )
+
+
+def _notification_url(notification):
+    if notification.kind == Notification.Kind.ORDER_COMMENT and notification.order_id:
+        return f'/orders/active/#order-{notification.order_id}'
+    if notification.client_id:
+        return f'/clients/{notification.client_id}/#comments'
+    return '/'
+
+
+def _latest_client_comment_text(client):
+    comment = client.comments.order_by('-created_at').first()
+    if comment:
+        return comment.text[:90]
+    return (client.manager_comment or client.internal_comment or '')[:90]
+
+
+def _last_client_order_date(client):
+    last_order = client.orders.aggregate(value=Max('order_date'))['value']
+    last_fact = client.period_facts.aggregate(value=Max('period_start'))['value']
+    value = max([item for item in [last_order, last_fact] if item], default=None)
+    return value
+
+
+def _format_date(value):
+    return value.strftime('%d.%m.%Y') if value else ''

@@ -7,9 +7,9 @@
   <style>
     :root {
       color-scheme: light;
-      --bg: #f5f7fb;
+      --bg: #f2f2f7;
       --surface: rgba(255,255,255,.78);
-      --line: rgba(120,133,154,.24);
+      --line: #e5e5ea;
       --text: #18202f;
       --muted: #667085;
       --accent: #007aff;
@@ -17,12 +17,13 @@
       --soft: rgba(255,255,255,.62);
       --danger: #b42318;
       --success: #067647;
+      --ios-green: #34c759;
+      --ios-red: #ff3b30;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       background:
-        radial-gradient(circle at 18% 0%, rgba(0,122,255,.12), transparent 28%),
         linear-gradient(180deg, #fbfcff 0%, var(--bg) 100%);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -39,7 +40,7 @@
       gap: 16px;
     }
     header strong { font-size: 18px; }
-    nav { display: flex; gap: 14px; align-items: center; }
+    nav { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
     nav a, .link-button {
       color: var(--accent-dark);
       text-decoration: none;
@@ -48,6 +49,7 @@
       font: inherit;
       cursor: pointer;
       padding: 0;
+      position: relative;
     }
     main { padding: 24px 28px 40px; max-width: 1280px; margin: 0 auto; }
     h1, h2 { margin-top: 0; }
@@ -61,6 +63,16 @@
     }
     .grid { display: grid; gap: 14px; }
     .grid.kpis { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+    .chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .chart-card {
+      min-height: 360px;
+      display: flex;
+      flex-direction: column;
+    }
+    .chart-card canvas {
+      width: 100% !important;
+      height: 285px !important;
+    }
     .kpi {
       border: 1px solid var(--line);
       border-radius: 16px;
@@ -148,7 +160,7 @@
       width: calc(100% - 32px);
       box-shadow: 0 24px 80px rgba(15,23,42,.26);
     }
-    .modal::backdrop { background: rgba(20,28,40,.28); backdrop-filter: blur(8px); }
+    .modal::backdrop { background: rgba(20,28,40,.28); backdrop-filter: blur(14px); }
     .modal-body { padding: 24px; background: rgba(255,255,255,.94); }
     .suggest-box {
       position: absolute;
@@ -167,8 +179,11 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      background: var(--surface);
-      border: 1px solid var(--line);
+      background: white;
+      border: 0;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 10px 28px rgba(31,41,55,.06);
     }
     th, td {
       border-bottom: 1px solid var(--line);
@@ -176,9 +191,51 @@
       text-align: left;
       vertical-align: top;
     }
-    th { background: #eef2f6; font-weight: 600; }
+    th { background: rgba(242,242,247,.9); font-weight: 600; }
+    th a { color: inherit; text-decoration: none; }
     .number { text-align: right; white-space: nowrap; }
     .muted { color: var(--muted); }
+    .badge {
+      display: inline-flex;
+      min-width: 18px;
+      height: 18px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: var(--ios-red);
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 0 5px;
+      margin-left: 4px;
+    }
+    .stage-badge {
+      display: inline-flex;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #e8f2ff;
+      color: var(--accent-dark);
+    }
+    .stage-badge.done { background: #e8f8ee; color: var(--success); }
+    .stage-badge.warning { background: #fff7db; color: #9a6700; }
+    .progress {
+      width: 130px;
+      height: 9px;
+      border-radius: 999px;
+      background: #e5e5ea;
+      overflow: hidden;
+    }
+    .progress span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+    .comment {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,.7);
+      margin-bottom: 10px;
+    }
+    .manager-link { color: var(--accent-dark); cursor: pointer; text-decoration: none; border-bottom: 1px dotted currentColor; }
     .chart {
       display: flex;
       align-items: end;
@@ -204,6 +261,7 @@
       main { padding: 16px; }
       table { font-size: 13px; }
       .date-grid { grid-template-columns: 1fr; }
+      .chart-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -213,7 +271,8 @@
     {% if user.is_authenticated %}
       <nav>
         <a href="{% url 'dashboard' %}">Дашборд</a>
-        <a href="{% url 'clients' %}">Клиенты</a>
+        <a href="{% url 'clients' %}">Клиенты{% if unread_client_comments_count %}<span class="badge">{{ unread_client_comments_count }}</span>{% endif %}</a>
+        <a href="{% url 'active_orders' %}">Заказы{% if unread_order_comments_count %}<span class="badge">{{ unread_order_comments_count }}</span>{% endif %}</a>
         <a href="{% url 'analytics' %}">Графики</a>
         <a href="{% url 'upload_excel' %}">Загрузка Excel</a>
         {% if user.is_staff or user.is_superuser %}<a href="{% url 'managers_admin' %}">Менеджеры</a>{% endif %}
@@ -235,5 +294,40 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
+  <dialog id="manager-summary-modal" class="modal">
+    <div class="modal-body">
+      <h2 id="manager-summary-title">Менеджер</h2>
+      <div class="grid kpis">
+        <div class="kpi"><span>Email</span><strong id="manager-summary-email">—</strong></div>
+        <div class="kpi"><span>Телефон</span><strong id="manager-summary-phone">—</strong></div>
+        <div class="kpi"><span>Возраст</span><strong id="manager-summary-age">—</strong></div>
+        <div class="kpi"><span>Клиентов</span><strong id="manager-summary-clients">—</strong></div>
+        <div class="kpi"><span>Выручка всего</span><strong id="manager-summary-revenue">—</strong></div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
+        <a class="button-link" id="manager-summary-link" href="#">Перейти к портфелю</a>
+        <button type="button" onclick="document.getElementById('manager-summary-modal').close()">Закрыть</button>
+      </div>
+    </div>
+  </dialog>
+  <script>
+    window.formatMoney = (value) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(value || 0);
+    document.addEventListener('click', async (event) => {
+      const link = event.target.closest('[data-manager-id]');
+      if (!link) return;
+      event.preventDefault();
+      const response = await fetch(`/api/managers/${link.dataset.managerId}/summary/`);
+      if (!response.ok) return;
+      const data = await response.json();
+      document.getElementById('manager-summary-title').textContent = data.full_name || 'Менеджер';
+      document.getElementById('manager-summary-email').textContent = data.email || '—';
+      document.getElementById('manager-summary-phone').textContent = data.phone || '—';
+      document.getElementById('manager-summary-age').textContent = data.age || '—';
+      document.getElementById('manager-summary-clients').textContent = data.clients_count;
+      document.getElementById('manager-summary-revenue').textContent = window.formatMoney(data.revenue_total);
+      document.getElementById('manager-summary-link').href = data.portfolio_url;
+      document.getElementById('manager-summary-modal').showModal();
+    });
+  </script>
 </body>
 </html>

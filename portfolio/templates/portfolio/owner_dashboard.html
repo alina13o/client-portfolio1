@@ -4,21 +4,15 @@
 {% block content %}
   <section class="panel">
     <h1>Сводка по бизнесу</h1>
-    <p class="muted">Агрегация по всем менеджерам и всем клиентам.</p>
+    <p class="muted">Графики показывают весь исторический период по всем менеджерам и клиентам.</p>
   </section>
 
-  <section class="grid kpis hero-kpis">
-    <div class="kpi"><span>Total Revenue</span><strong>{{ kpis.total_revenue|money }}</strong></div>
-    <div class="kpi"><span>Total Profit</span><strong>{{ kpis.total_profit|money }}</strong></div>
-    <div class="kpi"><span>Выручка текущего года</span><strong>{{ kpis.current_year_revenue|money }}</strong></div>
-    <div class="kpi"><span>Выручка прошлого года</span><strong>{{ kpis.previous_year_revenue|money }}</strong></div>
-    <div class="kpi"><span>Динамика год к году</span><strong>{{ kpis.year_growth_rate|percent }}</strong></div>
-    <div class="kpi"><span>Клиентов всего</span><strong>{{ kpis.total_clients }}</strong></div>
-    <div class="kpi"><span>Купили клиентов</span><strong>{{ kpis.bought_clients }}</strong></div>
-    <div class="kpi"><span>Средний чек</span><strong>{{ kpis.average_check|money }}</strong></div>
+  <section class="grid chart-grid">
+    <div class="panel chart-card"><h2>Выручка за всё время</h2><canvas id="revenueChart"></canvas></div>
+    <div class="panel chart-card"><h2>Активные клиенты по месяцам</h2><canvas id="activeClientsChart"></canvas></div>
+    <div class="panel chart-card"><h2>Средний чек по месяцам</h2><canvas id="averageCheckChart"></canvas></div>
+    <div class="panel chart-card"><h2>Динамика выручки месяц к месяцу</h2><canvas id="growthChart"></canvas></div>
   </section>
-
-  {% include "portfolio/includes/period_form.html" %}
 
   <section class="panel">
     <h2>Рейтинг менеджеров</h2>
@@ -35,7 +29,10 @@
         <tbody>
           {% for row in ranking %}
             <tr>
-              <td><a href="{% url 'owner_manager_detail' row.manager.id %}">{{ row.manager.full_name }}</a></td>
+              <td>
+                <a href="#" class="manager-link" data-manager-id="{{ row.manager.id }}">{{ row.manager.full_name }}</a>
+                <br><a class="muted" href="{% url 'owner_manager_detail' row.manager.id %}">Открыть портфель</a>
+              </td>
               <td class="number">{{ row.revenue|money }}</td>
               <td class="number">{{ row.profit|money }}</td>
               <td class="number">{{ row.clients_count }}</td>
@@ -47,4 +44,19 @@
       </table>
     </div>
   </section>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
+  <script>
+    const chartApiUrl = "{{ chart_api_url|escapejs }}";
+    const zoomOptions = { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, drag: { enabled: true }, mode: 'x' } };
+    const baseOptions = (tooltipLabel) => ({ responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (context) => tooltipLabel(context.parsed.y, context.label) } }, zoom: zoomOptions }, scales: { x: { grid: { display: false } }, y: { beginAtZero: true } } });
+    const createChart = (canvasId, config) => { const chart = new Chart(document.getElementById(canvasId), config); document.getElementById(canvasId).ondblclick = () => chart.resetZoom(); return chart; };
+    fetch(chartApiUrl).then((response) => response.json()).then(({ charts }) => {
+      createChart('revenueChart', { type: 'line', data: { labels: charts.labels, datasets: [{ data: charts.revenue, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true }] }, options: baseOptions((value, label) => `${label}: ${window.formatMoney(value)}`) });
+      createChart('activeClientsChart', { type: 'line', data: { labels: charts.labels, datasets: [{ data: charts.active_clients, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true }] }, options: baseOptions((value, label) => `${label}: ${value} активных клиентов`) });
+      createChart('averageCheckChart', { type: 'line', data: { labels: charts.labels, datasets: [{ data: charts.average_check, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true }] }, options: baseOptions((value, label) => `${label}: средний чек ${window.formatMoney(value)}`) });
+      createChart('growthChart', { type: 'bar', data: { labels: charts.labels, datasets: [{ data: charts.growth_rate, backgroundColor: charts.growth_rate.map((value) => value >= 0 ? '#34c759' : '#ff3b30'), borderRadius: 8 }] }, options: baseOptions((value, label) => `${label}: ${value >= 0 ? '+' : ''}${value.toFixed(1)}% к прошлому месяцу`) });
+    });
+  </script>
 {% endblock %}

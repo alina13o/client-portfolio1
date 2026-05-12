@@ -4,66 +4,132 @@
 {% block content %}
   <section class="panel">
     <h1>
-      Портфель менеджера: {{ manager.full_name }}
+      Портфель менеджера:
+      <a href="#" class="manager-link" data-manager-id="{{ manager.id }}">{{ manager.full_name }}</a>
       {% if readonly %}<span class="muted">View Only</span>{% endif %}
     </h1>
-    <p class="muted">Общие показатели рассчитаны за весь исторический период, а годовые карточки — по текущему и прошлому календарному году.</p>
+    <p class="muted">Динамика строится за весь исторический период. Двойной клик по графику сбрасывает приближение.</p>
   </section>
 
-  <section class="grid kpis hero-kpis">
-    <div class="kpi"><span>Выручка портфеля за текущий год</span><strong>{{ kpis.current_year_revenue|money }}</strong></div>
-    <div class="kpi"><span>Плановая выручка на портфель</span><strong>{{ kpis.portfolio_plan|money }}</strong></div>
-    <div class="kpi"><span>Выручка за прошлый год</span><strong>{{ kpis.previous_year_revenue|money }}</strong></div>
-    <div class="kpi"><span>Динамика к прошлому году</span><strong>{{ kpis.year_growth_rate|percent }}</strong></div>
-    <div class="kpi"><span>Всего в портфеле клиентов</span><strong>{{ kpis.total_clients }}</strong></div>
-    <div class="kpi"><span>Купили клиентов</span><strong>{{ kpis.bought_clients }}</strong></div>
-    <div class="kpi"><span>Средний чек</span><strong>{{ kpis.average_check|money }}</strong></div>
+  <section class="grid chart-grid">
+    <div class="panel chart-card">
+      <h2>Выручка за всё время</h2>
+      <canvas id="revenueChart"></canvas>
+    </div>
+    <div class="panel chart-card">
+      <h2>Активные клиенты по месяцам</h2>
+      <canvas id="activeClientsChart"></canvas>
+    </div>
+    <div class="panel chart-card">
+      <h2>Средний чек по месяцам</h2>
+      <canvas id="averageCheckChart"></canvas>
+    </div>
+    <div class="panel chart-card">
+      <h2>Динамика выручки месяц к месяцу</h2>
+      <canvas id="growthChart"></canvas>
+    </div>
   </section>
 
   <section class="panel">
-    <h2>Доходы от клиентов</h2>
-    <p class="muted">Показаны только клиенты, у которых есть платежи. Клиенты без заказов доступны во вкладке «Клиенты».</p>
+    <div style="display:flex;justify-content:space-between;gap:16px;align-items:center;">
+      <div>
+        <h2>Активные заказы</h2>
+        <p class="muted">Заказы в работе со стадиями, прогрессом и комментариями.</p>
+      </div>
+      <a class="button-link" href="{% url 'active_orders' %}">Открыть все</a>
+    </div>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Название клиента</th>
-            <th class="number">Доход всего</th>
-            <th>Платежи по месяцам и годам</th>
+            <th>№ заказа</th>
+            <th>Клиент</th>
+            <th class="number">Сумма</th>
+            <th>Дата создания</th>
+            <th>Текущая стадия</th>
+            <th>Прогресс</th>
+            <th>Менеджер</th>
           </tr>
         </thead>
         <tbody>
-          {% for row in revenue_rows %}
+          {% for order in active_orders %}
             <tr>
-              <td><a href="{% url 'client_detail' row.client.id %}">{{ row.client.name }}</a></td>
-              <td class="number">{{ row.total_revenue|money }}</td>
+              <td>#{{ order.id }}</td>
+              <td><a href="{% url 'client_detail' order.client.id %}">{{ order.client.name }}</a></td>
+              <td class="number">{{ order.amount|money }}</td>
+              <td>{{ order.created_at|date:"d.m.Y" }}</td>
+              <td><span class="stage-badge">{{ order.current_stage.title|default:"Нет стадий" }}</span></td>
+              <td><div class="progress"><span style="width:{{ order.progress.percent }}%"></span></div></td>
               <td>
-                <details>
-                  <summary>Показать периоды с заказами</summary>
-                  <table style="margin-top: 10px;">
-                    <thead>
-                      <tr>
-                        <th>Месяц</th>
-                        <th class="number">Сумма</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for period in row.periods %}
-                        <tr>
-                          <td>{{ period.period|date:"m.Y" }}</td>
-                          <td class="number">{{ period.revenue|money }}</td>
-                        </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                </details>
+                {% if order.manager %}
+                  <a href="#" class="manager-link" data-manager-id="{{ order.manager.manager.id }}">{{ order.manager.manager.full_name }}</a>
+                {% else %}—{% endif %}
               </td>
             </tr>
           {% empty %}
-            <tr><td colspan="3" class="muted">Нет клиентов с платежами.</td></tr>
+            <tr><td colspan="7" class="muted">Активных заказов пока нет.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
+  <script>
+    const chartApiUrl = "{{ chart_api_url|escapejs }}";
+    const rub = (value) => window.formatMoney(value);
+    const zoomOptions = {
+      pan: { enabled: true, mode: 'x' },
+      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, drag: { enabled: true }, mode: 'x' }
+    };
+    const baseOptions = (tooltipLabel) => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (context) => tooltipLabel(context.parsed.y, context.label, context)
+          }
+        },
+        zoom: zoomOptions
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: { beginAtZero: true, ticks: { callback: (value) => Number(value).toLocaleString('ru-RU') } }
+      }
+    });
+    const createChart = (canvasId, config) => {
+      const chart = new Chart(document.getElementById(canvasId), config);
+      document.getElementById(canvasId).ondblclick = () => chart.resetZoom();
+      return chart;
+    };
+    fetch(chartApiUrl)
+      .then((response) => response.json())
+      .then(({ charts }) => {
+        createChart('revenueChart', {
+          type: 'line',
+          data: { labels: charts.labels, datasets: [{ data: charts.revenue, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true, pointRadius: 3 }] },
+          options: baseOptions((value, label) => `${label}: ${rub(value)}`)
+        });
+        createChart('activeClientsChart', {
+          type: 'line',
+          data: { labels: charts.labels, datasets: [{ data: charts.active_clients, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true, pointRadius: 3 }] },
+          options: baseOptions((value, label) => `${label}: ${value} активных клиентов`)
+        });
+        createChart('averageCheckChart', {
+          type: 'line',
+          data: { labels: charts.labels, datasets: [{ data: charts.average_check, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true, pointRadius: 3 }] },
+          options: baseOptions((value, label) => `${label}: средний чек ${rub(value)}`)
+        });
+        createChart('growthChart', {
+          type: 'bar',
+          data: { labels: charts.labels, datasets: [{ data: charts.growth_rate, backgroundColor: charts.growth_rate.map((value) => value >= 0 ? '#34c759' : '#ff3b30'), borderRadius: 8 }] },
+          options: baseOptions((value, label) => `${label}: ${value >= 0 ? '+' : ''}${value.toFixed(1)}% к прошлому месяцу`)
+        });
+      });
+  </script>
 {% endblock %}

@@ -23,6 +23,7 @@ class Manager(TimestampedModel):
     )
     full_name = models.CharField(max_length=255)
     email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=64, blank=True)
     age = models.PositiveIntegerField(blank=True, null=True)
     current_year_plan = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
@@ -48,6 +49,8 @@ class Client(TimestampedModel):
     inn = models.CharField(max_length=32, blank=True)
     name = models.CharField(max_length=500)
     address = models.CharField(max_length=1000, blank=True)
+    phone = models.CharField(max_length=64, blank=True)
+    email = models.EmailField(blank=True)
     sales_channel = models.CharField(max_length=255, blank=True)
     internal_comment = models.TextField(blank=True)
     manager_comment = models.TextField(blank=True)
@@ -184,6 +187,81 @@ class Order(TimestampedModel):
 
     def __str__(self):
         return f'{self.client} - {self.order_date} - {self.amount}'
+
+
+class OrderStage(TimestampedModel):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='stages')
+    title = models.CharField(max_length=255)
+    position = models.PositiveIntegerField(default=0)
+    is_done = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['order', 'position']),
+            models.Index(fields=['is_done']),
+        ]
+        ordering = ['position', 'id']
+
+    def __str__(self):
+        return f'{self.order_id}: {self.title}'
+
+
+class ClientComment(TimestampedModel):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, blank=True, null=True)
+    text = models.TextField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['client', '-created_at']),
+            models.Index(fields=['author', '-created_at']),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.client_id}: {self.text[:40]}'
+
+
+class OrderComment(TimestampedModel):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, blank=True, null=True)
+    text = models.TextField()
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['order', '-created_at']),
+            models.Index(fields=['author', '-created_at']),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.order_id}: {self.text[:40]}'
+
+
+class Notification(TimestampedModel):
+    class Kind(models.TextChoices):
+        CLIENT_COMMENT = 'client_comment', 'Комментарий к клиенту'
+        ORDER_COMMENT = 'order_comment', 'Комментарий к заказу'
+
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='portfolio_notifications')
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, blank=True, null=True, related_name='sent_portfolio_notifications')
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, blank=True, null=True, related_name='notifications')
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, blank=True, null=True, related_name='notifications')
+    comment_text = models.TextField(blank=True)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['recipient', 'is_read', '-created_at']),
+            models.Index(fields=['kind', 'is_read']),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.recipient_id}: {self.kind}'
 
 
 class StagingOrder(TimestampedModel):

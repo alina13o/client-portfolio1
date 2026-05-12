@@ -7,7 +7,12 @@
       <div>
         <h1>{{ client.name }}</h1>
         <p class="muted">ИНН: {{ client.inn|default:"не указан" }} · Канал: {{ client.sales_channel|default:"не указан" }}</p>
-        <p class="muted">Менеджер: {% if assignment %}{{ assignment.manager.full_name }}{% else %}не закреплен{% endif %}</p>
+        <p class="muted">
+          Менеджер:
+          {% if assignment %}
+            <a href="#" class="manager-link" data-manager-id="{{ assignment.manager.id }}">{{ assignment.manager.full_name }}</a>
+          {% else %}не закреплен{% endif %}
+        </p>
       </div>
       <div style="display:flex;gap:8px;">
         <button onclick="document.getElementById('edit-client-modal').showModal()">✎</button>
@@ -17,8 +22,33 @@
         </form>
       </div>
     </div>
-    {% if client.address %}<p>Адрес: {{ client.address }}</p>{% endif %}
+    <div class="grid kpis" style="margin-top:16px;">
+      <div class="kpi"><span>Адрес</span><strong>{{ client.address|default:"—" }}</strong></div>
+      <div class="kpi"><span>Телефон</span><strong>{{ client.phone|default:"—" }}</strong></div>
+      <div class="kpi"><span>Email</span><strong>{{ client.email|default:"—" }}</strong></div>
+      <div class="kpi"><span>Последний заказ</span><strong>{{ totals.last_order|date:"d.m.Y"|default:"—" }}</strong></div>
+    </div>
     {% if client.internal_comment %}<p><strong>Комментарий:</strong> {{ client.internal_comment }}</p>{% endif %}
+  </section>
+
+  <section class="panel" id="comments">
+    <h2>Комментарии</h2>
+    <form id="client-comment-form" style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;">
+      {% csrf_token %}
+      <textarea name="text" rows="3" placeholder="Добавить комментарий" style="width:100%;border:1px solid var(--line);border-radius:14px;padding:10px;font:inherit;"></textarea>
+      <button class="primary" type="submit">Добавить</button>
+    </form>
+    <div id="client-comments" style="margin-top:16px;">
+      {% for comment in comments %}
+        <article class="comment" data-comment-id="{{ comment.id }}">
+          <strong>{{ comment.author.get_full_name|default:comment.author.username }}</strong>
+          <span class="muted">· {{ comment.created_at|date:"d.m.Y H:i" }}</span>
+          <p>{{ comment.text }}</p>
+        </article>
+      {% empty %}
+        <p class="muted">Комментариев пока нет.</p>
+      {% endfor %}
+    </div>
   </section>
 
   <section class="panel">
@@ -91,4 +121,32 @@
       </div>
     </form>
   </dialog>
+  <script>
+    (() => {
+      const form = document.getElementById('client-comment-form');
+      const list = document.getElementById('client-comments');
+      const csrf = form.querySelector('[name=csrfmiddlewaretoken]').value;
+      const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const data = new FormData(form);
+        const response = await fetch("{% url 'client_comment_create' client.id %}", {
+          method: 'POST',
+          headers: { 'X-CSRFToken': csrf },
+          body: data
+        });
+        if (!response.ok) return;
+        const { comment } = await response.json();
+        form.reset();
+        if (list.querySelector('.muted')) list.innerHTML = '';
+        list.insertAdjacentHTML('afterbegin', `
+          <article class="comment" data-comment-id="${comment.id}">
+            <strong>${escapeHtml(comment.author)}</strong>
+            <span class="muted">· ${escapeHtml(comment.created_at)}</span>
+            <p>${escapeHtml(comment.text)}</p>
+          </article>
+        `);
+      });
+    })();
+  </script>
 {% endblock %}

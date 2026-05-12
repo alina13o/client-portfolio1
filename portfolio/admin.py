@@ -3,25 +3,29 @@ from django.contrib import admin
 from .models import (
     Category,
     Client,
+    ClientComment,
     ClientManagerAssignment,
     ClientPeriodFact,
     ImportBatch,
     Manager,
+    Notification,
     Order,
+    OrderComment,
+    OrderStage,
     StagingOrder,
 )
 
 
 @admin.register(Manager)
 class ManagerAdmin(admin.ModelAdmin):
-    list_display = ('full_name', 'email', 'user', 'age', 'current_year_plan', 'is_active')
+    list_display = ('full_name', 'email', 'phone', 'user', 'age', 'current_year_plan', 'is_active')
     list_filter = ('is_active',)
     search_fields = ('full_name', 'email', 'user__username')
 
 
 @admin.register(Client)
 class ClientAdmin(admin.ModelAdmin):
-    list_display = ('name', 'external_code', 'inn', 'sales_channel', 'status')
+    list_display = ('name', 'external_code', 'inn', 'phone', 'email', 'sales_channel', 'status')
     list_filter = ('status',)
     search_fields = ('name', 'external_code', 'inn', 'address', 'internal_comment', 'manager_comment')
 
@@ -44,6 +48,32 @@ class OrderAdmin(admin.ModelAdmin):
     list_filter = ('status', 'category', 'nomenclature_group', 'order_date')
     search_fields = ('client__name', 'external_order_id', 'note', 'nomenclature_group')
     date_hierarchy = 'order_date'
+
+
+@admin.register(OrderStage)
+class OrderStageAdmin(admin.ModelAdmin):
+    list_display = ('order', 'position', 'title', 'is_done', 'completed_at')
+    list_filter = ('is_done',)
+    search_fields = ('order__client__name', 'title')
+
+
+@admin.register(ClientComment)
+class ClientCommentAdmin(admin.ModelAdmin):
+    list_display = ('client', 'author', 'created_at')
+    search_fields = ('client__name', 'author__username', 'text')
+
+
+@admin.register(OrderComment)
+class OrderCommentAdmin(admin.ModelAdmin):
+    list_display = ('order', 'author', 'created_at')
+    search_fields = ('order__client__name', 'author__username', 'text')
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('recipient', 'actor', 'kind', 'is_read', 'created_at')
+    list_filter = ('kind', 'is_read')
+    search_fields = ('recipient__username', 'actor__username', 'comment_text')
 
 
 @admin.register(ImportBatch)

@@ -53,11 +53,13 @@ class ClientForm(forms.ModelForm):
 
     class Meta:
         model = Client
-        fields = ['name', 'inn', 'address', 'sales_channel', 'internal_comment', 'manager_comment']
+        fields = ['name', 'inn', 'address', 'phone', 'email', 'sales_channel', 'internal_comment', 'manager_comment']
         labels = {
             'name': 'Название',
             'inn': 'ИНН',
             'address': 'Адрес',
+            'phone': 'Телефон',
+            'email': 'Email',
             'sales_channel': 'Канал продаж',
             'internal_comment': 'Комментарий мой',
             'manager_comment': 'Комментарий менеджера',
@@ -109,10 +111,11 @@ class ManagerForm(forms.ModelForm):
 
     class Meta:
         model = Manager
-        fields = ['full_name', 'email', 'age', 'current_year_plan', 'is_active']
+        fields = ['full_name', 'email', 'phone', 'age', 'current_year_plan', 'is_active']
         labels = {
             'full_name': 'ФИО',
             'email': 'Email',
+            'phone': 'Телефон',
             'age': 'Возраст',
             'current_year_plan': 'План на год',
             'is_active': 'Активен',

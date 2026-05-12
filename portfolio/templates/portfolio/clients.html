@@ -16,12 +16,34 @@
   <section class="panel">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Название</th><th>ИНН</th><th>Адрес</th></tr></thead>
+        <thead>
+          <tr>
+            <th><a href="?sort=name&direction={% if sort == 'name' and direction == 'asc' %}desc{% else %}asc{% endif %}&q={{ query }}">Название</a></th>
+            <th><a href="?sort=inn&direction={% if sort == 'inn' and direction == 'asc' %}desc{% else %}asc{% endif %}&q={{ query }}">ИНН</a></th>
+            <th><a href="?sort=phone&direction={% if sort == 'phone' and direction == 'asc' %}desc{% else %}asc{% endif %}&q={{ query }}">Телефон</a></th>
+            <th><a href="?sort=email&direction={% if sort == 'email' and direction == 'asc' %}desc{% else %}asc{% endif %}&q={{ query }}">Email</a></th>
+            <th><a href="?sort=manager&direction={% if sort == 'manager' and direction == 'asc' %}desc{% else %}asc{% endif %}&q={{ query }}">Менеджер</a></th>
+            <th>Комментарий</th>
+            <th><a href="?sort=last_order&direction={% if sort == 'last_order' and direction == 'asc' %}desc{% else %}asc{% endif %}&q={{ query }}">Дата последнего заказа</a></th>
+          </tr>
+        </thead>
         <tbody id="client-results">
           {% for client in clients %}
-            <tr><td><a href="{% url 'client_detail' client.id %}">{{ client.name }}</a></td><td>{{ client.inn }}</td><td>{{ client.address }}</td></tr>
+            <tr>
+              <td><a href="{% url 'client_detail' client.id %}">{{ client.name }}</a></td>
+              <td>{{ client.inn|default:"—" }}</td>
+              <td>{{ client.phone|default:"—" }}</td>
+              <td>{{ client.email|default:"—" }}</td>
+              <td>
+                {% if client.table_manager %}
+                  <a href="#" class="manager-link" data-manager-id="{{ client.table_manager.id }}">{{ client.table_manager.full_name }}</a>
+                {% else %}—{% endif %}
+              </td>
+              <td class="muted">{{ client.table_last_comment|default:"—" }}</td>
+              <td>{{ client.table_last_order|date:"d.m.Y"|default:"—" }}</td>
+            </tr>
           {% empty %}
-            <tr><td colspan="3" class="muted">Клиенты не найдены.</td></tr>
+            <tr><td colspan="7" class="muted">Клиенты не найдены.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -46,9 +68,18 @@
       const results = document.getElementById('client-results');
       const suggestions = document.getElementById('suggestions');
       let timer = null;
-      const row = (item) => `<tr><td><a href="${item.url}">${item.name}</a></td><td>${item.inn || ''}</td><td>${item.address || ''}</td></tr>`;
+      const row = (item) => `
+        <tr>
+          <td><a href="${item.url}">${item.name}</a></td>
+          <td>${item.inn || '—'}</td>
+          <td>${item.phone || '—'}</td>
+          <td>${item.email || '—'}</td>
+          <td>${item.manager_id ? `<a href="#" class="manager-link" data-manager-id="${item.manager_id}">${item.manager}</a>` : '—'}</td>
+          <td class="muted">${item.last_comment || '—'}</td>
+          <td>${item.last_order || '—'}</td>
+        </tr>`;
       const render = (items) => {
-        results.innerHTML = items.length ? items.map(row).join('') : '<tr><td colspan="3" class="muted">Клиенты не найдены.</td></tr>';
+        results.innerHTML = items.length ? items.map(row).join('') : '<tr><td colspan="7" class="muted">Клиенты не найдены.</td></tr>';
         suggestions.hidden = !items.length || !input.value;
         suggestions.innerHTML = items.map((item) => `<a href="${item.url}">${item.highlight || item.name}<br><span class="muted">${item.inn || ''}</span></a>`).join('');
       };
