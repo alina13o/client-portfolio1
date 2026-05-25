@@ -103,6 +103,7 @@ class CrudValidationTests(TestCase):
             '/admin/managers/',
             {
                 'full_name': 'Иванов Иван Иванович',
+                'login': 'ivanov',
                 'email': 'ivanov@example.com',
                 'phone': '+7 900 100-10-10',
                 'age': 34,
@@ -118,6 +119,7 @@ class CrudValidationTests(TestCase):
             '/admin/managers/',
             {
                 'full_name': 'Дубль',
+                'login': 'ivanov2',
                 'email': 'ivanov@example.com',
                 'phone': '+7 900 100-10-11',
                 'age': 35,
@@ -159,3 +161,30 @@ class CrudValidationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         stage.refresh_from_db()
         self.assertTrue(stage.is_done)
+
+    def test_manager_sees_only_own_orders(self):
+        manager_user = User.objects.create_user(username='own-manager', password='secret')
+        other_user = User.objects.create_user(username='other-manager', password='secret')
+        manager = Manager.objects.create(user=manager_user, full_name='Свой менеджер', email='own@example.com')
+        other_manager = Manager.objects.create(user=other_user, full_name='Чужой менеджер', email='other@example.com')
+        own_client = Client.objects.create(name='Свой клиент', inn='7700000101')
+        other_client = Client.objects.create(name='Чужой клиент', inn='7700000102')
+        ClientManagerAssignment.objects.create(client=own_client, manager=manager, valid_from=date(2026, 1, 1))
+        ClientManagerAssignment.objects.create(client=other_client, manager=other_manager, valid_from=date(2026, 1, 1))
+        own_order = Order.objects.create(client=own_client, order_date=date(2026, 5, 1), amount=Decimal('10000.00'))
+        other_order = Order.objects.create(client=other_client, order_date=date(2026, 5, 1), amount=Decimal('20000.00'))
+
+        self.client.force_login(manager_user)
+        response = self.client.get('/orders/active/?status=all')
+
+        self.assertContains(response, f'#{own_order.id}')
+        self.assertNotContains(response, f'#{other_order.id}')
+
+    def test_closed_order_remains_visible_in_all_filter(self):
+        client = Client.objects.create(name='ООО Закрытый', inn='7700000103')
+        order = Order.objects.create(client=client, order_date=date(2026, 5, 1), amount=Decimal('10000.00'))
+        OrderStage.objects.create(order=order, title='Закрыт', position=1, is_done=True)
+
+        response = self.client.get('/orders/active/?status=all')
+
+        self.assertContains(response, f'#{order.id}')

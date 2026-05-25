@@ -3,8 +3,19 @@
 
 {% block content %}
   <section class="panel">
-    <h1>Активные заказы</h1>
-    <p class="muted">Стадии можно отмечать чекбоксами. Дата выполнения фиксируется автоматически.</p>
+    <div style="display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;">
+      <div>
+        <h1>Заказы</h1>
+        <p class="muted">Все заказы остаются в списке. Активные — это те, где текущая стадия не «Отгружен» и не «Закрыт».</p>
+      </div>
+      <button class="primary" style="max-width:180px;" onclick="document.getElementById('order-create-modal').showModal()">+ Новый заказ</button>
+    </div>
+    <div class="segmented" style="margin-top:14px;">
+      <a class="button-link" style="{% if selected_status != 'all' %}background:white;color:var(--accent-dark);{% endif %}" href="{% url 'active_orders' %}?status=all">Все</a>
+      <a class="button-link" style="{% if selected_status != 'active' %}background:white;color:var(--accent-dark);{% endif %}" href="{% url 'active_orders' %}?status=active">Активные</a>
+      <a class="button-link" style="{% if selected_status != 'shipped' %}background:white;color:var(--accent-dark);{% endif %}" href="{% url 'active_orders' %}?status=shipped">Отгруженные</a>
+      <a class="button-link" style="{% if selected_status != 'closed' %}background:white;color:var(--accent-dark);{% endif %}" href="{% url 'active_orders' %}?status=closed">Закрытые</a>
+    </div>
   </section>
 
   <section class="panel">
@@ -12,11 +23,11 @@
       <table>
         <thead>
           <tr>
-            <th>№ заказа</th>
+            <th>№</th>
             <th>Клиент</th>
             <th class="number">Сумма</th>
-            <th>Дата создания</th>
-            <th>Текущая стадия</th>
+            <th>Дата</th>
+            <th>Стадия</th>
             <th>Прогресс</th>
             <th>Менеджер</th>
           </tr>
@@ -27,8 +38,8 @@
               <td><a href="#order-detail-{{ order.id }}" onclick="document.getElementById('order-detail-{{ order.id }}').open = true;">#{{ order.id }}</a></td>
               <td><a href="{% url 'client_detail' order.client.id %}">{{ order.client.name }}</a></td>
               <td class="number">{{ order.amount|money }}</td>
-              <td>{{ order.created_at|date:"d.m.Y" }}</td>
-              <td><span class="stage-badge warning">{{ order.current_stage.title|default:"Нет стадий" }}</span></td>
+              <td>{{ order.order_date|date:"d.m.Y" }}</td>
+              <td><span class="stage-badge {% if not order.is_active_project %}done{% else %}warning{% endif %}" id="current-stage-{{ order.id }}">{{ order.current_stage.title|default:"Нет стадий" }}</span></td>
               <td>
                 <div class="progress"><span id="progress-bar-{{ order.id }}" style="width:{{ order.progress.percent }}%"></span></div>
                 <span class="muted" id="progress-text-{{ order.id }}">{{ order.progress.done }}/{{ order.progress.total }}</span>
@@ -42,34 +53,71 @@
             <tr>
               <td colspan="7">
                 <details id="order-detail-{{ order.id }}">
-                  <summary>Стадии и комментарии заказа #{{ order.id }}</summary>
-                  <div class="grid" style="grid-template-columns:minmax(260px, 1fr) minmax(260px, 1fr);margin-top:16px;">
+                  <summary>Редактирование заказа #{{ order.id }}</summary>
+                  <div class="grid" style="grid-template-columns:minmax(300px, .9fr) minmax(320px, 1.1fr);margin-top:16px;">
+                    <div>
+                      <h3>Данные заказа</h3>
+                      <form method="post" action="{% url 'order_update' order.id %}" class="grid">
+                        {% csrf_token %}
+                        <label>Дата <input type="date" name="order_date" value="{{ order.order_date|date:'Y-m-d' }}"></label>
+                        <label>Сумма <input type="number" step="0.01" name="amount" value="{{ order.amount }}"></label>
+                        <label>Себестоимость <input type="number" step="0.01" name="cost_amount" value="{{ order.cost_amount }}"></label>
+                        <label>Позиции <input type="number" name="positions_count" value="{{ order.positions_count|default:'' }}"></label>
+                        <label>Номенклатура <input name="nomenclature_group" value="{{ order.nomenclature_group }}"></label>
+                        <input type="hidden" name="client" value="{{ order.client.id }}">
+                        <input type="hidden" name="status" value="{{ order.status }}">
+                        <button type="submit">Сохранить заказ</button>
+                      </form>
+                      {% if can_assign_manager %}
+                        <form method="post" action="{% url 'order_assign_manager' order.id %}" style="margin-top:12px;">
+                          {% csrf_token %}
+                          <label>Переназначить менеджера
+                            <select name="manager">
+                              {% for manager in managers %}
+                                <option value="{{ manager.id }}" {% if order.manager and order.manager.manager_id == manager.id %}selected{% endif %}>{{ manager.full_name }}</option>
+                              {% endfor %}
+                            </select>
+                          </label>
+                          <button type="submit">Переназначить</button>
+                        </form>
+                      {% endif %}
+                    </div>
                     <div>
                       <h3>Стадии</h3>
                       <div id="stages-{{ order.id }}">
                         {% for stage in order.stages.all %}
-                          <label class="stage-row" style="display:flex;gap:10px;align-items:center;margin:8px 0;">
+                          <div class="stage-row" data-stage-row="{{ stage.id }}" style="display:grid;grid-template-columns:28px 1fr auto auto auto auto;gap:8px;align-items:center;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:12px;background:white;">
                             <input type="checkbox" data-order-id="{{ order.id }}" data-stage-id="{{ stage.id }}" {% if stage.is_done %}checked{% endif %}>
                             <span class="stage-badge {% if stage.is_done %}done{% endif %}">{{ stage.title }}</span>
                             <span class="muted">{{ stage.completed_at|date:"d.m.Y H:i" }}</span>
-                          </label>
+                            <button type="button" data-stage-move="up" data-order-id="{{ order.id }}" data-stage-id="{{ stage.id }}">↑</button>
+                            <button type="button" data-stage-move="down" data-order-id="{{ order.id }}" data-stage-id="{{ stage.id }}">↓</button>
+                            <button type="button" data-stage-delete data-order-id="{{ order.id }}" data-stage-id="{{ stage.id }}" style="color:#b42318;">×</button>
+                          </div>
                         {% endfor %}
                       </div>
-                      <form class="stage-add-form" data-order-id="{{ order.id }}" style="display:flex;gap:8px;margin-top:12px;">
+                      <form class="stage-add-form" data-order-id="{{ order.id }}" style="display:grid;grid-template-columns:1fr 130px 1fr auto;gap:8px;margin-top:12px;">
                         {% csrf_token %}
                         <input name="title" placeholder="+ Добавить стадию">
+                        <select name="insert_at">
+                          <option value="end">В конец</option>
+                          <option value="start">В начало</option>
+                          <option value="after">После стадии</option>
+                        </select>
+                        <select name="position_after">
+                          {% for stage in order.stages.all %}<option value="{{ stage.id }}">{{ stage.title }}</option>{% endfor %}
+                        </select>
                         <button type="submit">Добавить</button>
                       </form>
-                    </div>
-                    <div>
-                      <h3>Комментарии</h3>
+
+                      <h3>Комментарии <span class="muted">({{ order.comments.count }})</span></h3>
                       <form class="order-comment-form" data-order-id="{{ order.id }}" style="display:grid;grid-template-columns:1fr auto;gap:8px;">
                         {% csrf_token %}
                         <textarea name="text" rows="3" placeholder="Комментарий к заказу" style="width:100%;border:1px solid var(--line);border-radius:14px;padding:10px;font:inherit;"></textarea>
                         <button class="primary" type="submit">Отправить</button>
                       </form>
                       <div id="order-comments-{{ order.id }}" style="margin-top:12px;">
-                        {% for comment in order.comments.all %}
+                        {% for comment in order.visible_comments %}
                           <article class="comment">
                             <strong>{{ comment.author.get_full_name|default:comment.author.username }}</strong>
                             <span class="muted">· {{ comment.created_at|date:"d.m.Y H:i" }}</span>
@@ -78,6 +126,18 @@
                         {% empty %}
                           <p class="muted">Комментариев пока нет.</p>
                         {% endfor %}
+                        {% if order.hidden_comments_count %}
+                          <details>
+                            <summary>Показать еще {{ order.hidden_comments_count }}</summary>
+                            {% for comment in order.comments.all|slice:"5:" %}
+                              <article class="comment">
+                                <strong>{{ comment.author.get_full_name|default:comment.author.username }}</strong>
+                                <span class="muted">· {{ comment.created_at|date:"d.m.Y H:i" }}</span>
+                                <p>{{ comment.text }}</p>
+                              </article>
+                            {% endfor %}
+                          </details>
+                        {% endif %}
                       </div>
                     </div>
                   </div>
@@ -85,19 +145,32 @@
               </td>
             </tr>
           {% empty %}
-            <tr><td colspan="7" class="muted">Активных заказов пока нет.</td></tr>
+            <tr><td colspan="7" class="muted">Заказов пока нет.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </section>
 
+  <dialog id="order-create-modal" class="modal">
+    <form class="modal-body" method="post" action="{% url 'order_create' %}">
+      {% csrf_token %}
+      <h2>Новый заказ</h2>
+      {{ order_form.as_p }}
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button type="button" onclick="document.getElementById('order-create-modal').close()">Отмена</button>
+        <button class="primary" type="submit">Создать</button>
+      </div>
+    </form>
+  </dialog>
+
   <script>
     const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value;
     const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
-    const updateProgress = (orderId, progress) => {
+    const updateProgress = (orderId, progress, currentStage) => {
       document.getElementById(`progress-bar-${orderId}`).style.width = `${progress.percent}%`;
       document.getElementById(`progress-text-${orderId}`).textContent = `${progress.done}/${progress.total}`;
+      if (currentStage && document.getElementById(`current-stage-${orderId}`)) document.getElementById(`current-stage-${orderId}`).textContent = currentStage.title;
     };
     document.addEventListener('change', async (event) => {
       const checkbox = event.target.closest('[data-stage-id]');
@@ -108,24 +181,35 @@
       data.append('is_done', checkbox.checked ? 'true' : 'false');
       const response = await fetch(`/orders/${orderId}/stages/${stageId}/toggle/`, { method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: data });
       const payload = await response.json();
-      updateProgress(orderId, payload.progress);
-      checkbox.closest('label').querySelector('.stage-badge').classList.toggle('done', payload.stage.is_done);
+      updateProgress(orderId, payload.progress, payload.current_stage);
+      checkbox.closest('.stage-row').querySelector('.stage-badge').classList.toggle('done', payload.stage.is_done);
+    });
+    document.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-stage-move]');
+      if (!button) return;
+      const response = await fetch(`/orders/${button.dataset.orderId}/stages/${button.dataset.stageId}/move/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+        body: new URLSearchParams({ direction: button.dataset.stageMove })
+      });
+      if (response.ok) location.reload();
+    });
+    document.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-stage-delete]');
+      if (!button) return;
+      if (!confirm('Удалить стадию?')) return;
+      const response = await fetch(`/orders/${button.dataset.orderId}/stages/${button.dataset.stageId}/delete/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+      });
+      if (response.ok) location.reload();
     });
     document.querySelectorAll('.stage-add-form').forEach((form) => {
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const orderId = form.dataset.orderId;
         const response = await fetch(`/orders/${orderId}/stages/new/`, { method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: new FormData(form) });
-        const payload = await response.json();
-        form.reset();
-        document.getElementById(`stages-${orderId}`).insertAdjacentHTML('beforeend', `
-          <label class="stage-row" style="display:flex;gap:10px;align-items:center;margin:8px 0;">
-            <input type="checkbox" data-order-id="${orderId}" data-stage-id="${payload.stage.id}">
-            <span class="stage-badge">${escapeHtml(payload.stage.title)}</span>
-            <span class="muted"></span>
-          </label>
-        `);
-        updateProgress(orderId, payload.progress);
+        if (response.ok) location.reload();
       });
     });
     document.querySelectorAll('.order-comment-form').forEach((form) => {

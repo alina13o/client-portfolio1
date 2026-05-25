@@ -9,7 +9,7 @@
   <section class="panel">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ФИО</th><th>Email</th><th>Телефон</th><th>Возраст</th><th>Клиентов</th><th>Активен</th><th>Действия</th></tr></thead>
+        <thead><tr><th>ФИО</th><th>Логин</th><th>Email</th><th>Телефон</th><th>Возраст</th><th>Новый пароль</th><th>Клиентов</th><th>Активен</th><th>Заморозка</th><th>Действия</th></tr></thead>
         <tbody>
           {% for manager in managers %}
             <tr>
@@ -17,17 +17,20 @@
                 <form id="manager-edit-{{ manager.id }}" method="post" action="{% url 'manager_update' manager.id %}">{% csrf_token %}</form>
                 <input form="manager-edit-{{ manager.id }}" name="full_name" value="{{ manager.full_name }}">
               </td>
+              <td><input form="manager-edit-{{ manager.id }}" name="login" value="{% if manager.user %}{{ manager.user.username }}{% else %}{{ manager.email }}{% endif %}"></td>
               <td>
                 <input form="manager-edit-{{ manager.id }}" name="email" value="{{ manager.email }}" data-validate-manager-email data-exclude-id="{{ manager.id }}">
                 <small class="field-hint muted"></small>
               </td>
               <td><input form="manager-edit-{{ manager.id }}" name="phone" value="{{ manager.phone }}"></td>
               <td><input form="manager-edit-{{ manager.id }}" name="age" type="number" value="{{ manager.age|default:'' }}"></td>
+              <td><input form="manager-edit-{{ manager.id }}" name="password" type="password" placeholder="Не менять"></td>
               <td>
                 <input form="manager-edit-{{ manager.id }}" type="hidden" name="current_year_plan" value="{{ manager.current_year_plan }}">
                 {{ manager.clients_count }}
               </td>
               <td><input form="manager-edit-{{ manager.id }}" name="is_active" type="checkbox" {% if manager.is_active %}checked{% endif %}></td>
+              <td><label><input form="manager-edit-{{ manager.id }}" name="is_frozen" type="checkbox" {% if manager.user and not manager.user.is_active %}checked{% endif %}> заморожен</label></td>
               <td>
                 <button form="manager-edit-{{ manager.id }}" type="submit">Сохранить</button>
                 <form method="post" action="{% url 'manager_delete' manager.id %}" onsubmit="return confirm('Удалить или деактивировать менеджера?');">
@@ -46,6 +49,7 @@
     <form class="modal-body" method="post">
       {% csrf_token %}
       <h2>Новый менеджер</h2>
+      <p class="muted">Логин для входа будет равен значению поля «Логин». Пароль можно задать сразу здесь.</p>
       {{ form.as_p }}
       <div style="display:flex;gap:10px;justify-content:flex-end;">
         <button type="button" onclick="document.getElementById('manager-modal').close()">Отмена</button>

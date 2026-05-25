@@ -11,6 +11,11 @@
     <p class="muted">Динамика строится за весь исторический период. Двойной клик по графику сбрасывает приближение.</p>
   </section>
 
+  <section class="grid kpis">
+    <div class="kpi"><span>Выручка за весь период</span><strong>{{ total_revenue_all_time|money }}</strong></div>
+    <div class="kpi"><span>Активных заказов сейчас</span><strong>{{ active_orders|length }}</strong></div>
+  </section>
+
   <section class="grid chart-grid">
     <div class="panel chart-card">
       <h2>Выручка за всё время</h2>
@@ -36,7 +41,7 @@
         <h2>Активные заказы</h2>
         <p class="muted">Заказы в работе со стадиями, прогрессом и комментариями.</p>
       </div>
-      <a class="button-link" href="{% url 'active_orders' %}">Открыть все</a>
+      <a class="button-link" href="{% url 'active_orders' %}?status=active">Открыть все</a>
     </div>
     <div class="table-wrap">
       <table>

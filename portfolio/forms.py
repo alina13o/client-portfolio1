@@ -3,7 +3,8 @@ from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 
-from portfolio.models import Client, ClientManagerAssignment, ClientPeriodFact, Manager
+from portfolio.models import Client, ClientManagerAssignment, ClientPeriodFact, Manager, Order
+from portfolio.services.access import is_owner, visible_clients_for_user
 
 
 class ExcelImportForm(forms.Form):
@@ -127,8 +128,47 @@ class ClientPeriodFactForm(forms.ModelForm):
         return value.replace(day=1)
 
 
-class ManagerForm(forms.ModelForm):
+class OrderForm(forms.ModelForm):
+    manager = forms.ModelChoiceField(label='Менеджер', queryset=Manager.objects.none(), required=False)
+    initial_comment = forms.CharField(label='Комментарий', required=False, widget=forms.Textarea(attrs={'rows': 3}))
+
+    class Meta:
+        model = Order
+        fields = ['client', 'order_date', 'amount', 'cost_amount', 'positions_count', 'nomenclature_group', 'status']
+        labels = {
+            'client': 'Клиент',
+            'order_date': 'Дата заказа',
+            'amount': 'Сумма',
+            'cost_amount': 'Себестоимость',
+            'positions_count': 'Количество позиций',
+            'nomenclature_group': 'Номенклатурная группа',
+            'status': 'Статус',
+        }
+        widgets = {
+            'order_date': forms.DateInput(attrs={'type': 'date'}),
+        }
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+        self.fields['client'].queryset = visible_clients_for_user(user) if user else Client.objects.none()
+        self.fields['manager'].queryset = Manager.objects.filter(is_active=True)
+        if user and not is_owner(user):
+            self.fields['manager'].widget = forms.HiddenInput()
+            self.fields['manager'].required = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        client = cleaned_data.get('client')
+        if self.user and client and not visible_clients_for_user(self.user).filter(id=client.id).exists():
+            self.add_error('client', 'Недостаточно прав для этого клиента.')
+        return cleaned_data
+
+
+class ManagerAccountForm(forms.ModelForm):
+    login = forms.CharField(label='Логин')
     password = forms.CharField(label='Пароль', required=False, widget=forms.PasswordInput)
+    is_frozen = forms.BooleanField(label='Доступ заморожен', required=False)
 
     class Meta:
         model = Manager
@@ -145,6 +185,11 @@ class ManagerForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['email'].widget.attrs.update({'data-validate-manager-email': '1'})
+        if self.instance and self.instance.pk and self.instance.user:
+            self.fields['login'].initial = self.instance.user.username
+            self.fields['is_frozen'].initial = not self.instance.user.is_active
+        elif self.instance and self.instance.pk:
+            self.fields['login'].initial = self.instance.email or f'manager-{self.instance.pk}'
 
     def clean_email(self):
         email = (self.cleaned_data.get('email') or '').strip().lower()
@@ -157,23 +202,43 @@ class ManagerForm(forms.ModelForm):
             raise forms.ValidationError('Менеджер с таким email уже существует.')
         return email
 
+    def clean_login(self):
+        login = (self.cleaned_data.get('login') or '').strip()
+        if not login:
+            raise forms.ValidationError('Укажите логин менеджера.')
+        queryset = User.objects.filter(username__iexact=login)
+        if self.instance and self.instance.pk and self.instance.user_id:
+            queryset = queryset.exclude(pk=self.instance.user_id)
+        if queryset.exists():
+            raise forms.ValidationError('Пользователь с таким логином уже существует.')
+        return login
+
     def save(self, commit=True):
         manager = super().save(commit=False)
+        login = self.cleaned_data['login']
         password = self.cleaned_data.get('password')
+        is_frozen = self.cleaned_data.get('is_frozen')
         if commit:
             manager.save()
-            if manager.email:
+            user = manager.user
+            created = False
+            if user is None:
                 user, created = User.objects.get_or_create(
-                    username=manager.email,
+                    username=login,
                     defaults={'email': manager.email, 'first_name': manager.full_name},
                 )
-                user.email = manager.email
-                user.first_name = manager.full_name
-                if password:
-                    user.set_password(password)
-                elif created:
-                    user.set_unusable_password()
-                user.save()
-                manager.user = user
-                manager.save(update_fields=['user', 'updated_at'])
+            user.username = login
+            user.email = manager.email
+            user.first_name = manager.full_name
+            user.is_active = not is_frozen
+            if password:
+                user.set_password(password)
+            elif created:
+                user.set_unusable_password()
+            user.save()
+            manager.user = user
+            manager.save(update_fields=['user', 'updated_at'])
         return manager
+
+
+ManagerForm = ManagerAccountForm

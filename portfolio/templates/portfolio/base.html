@@ -273,7 +273,6 @@
         <a href="{% url 'dashboard' %}">Дашборд</a>
         <a href="{% url 'clients' %}">Клиенты{% if unread_client_comments_count %}<span class="badge">{{ unread_client_comments_count }}</span>{% endif %}</a>
         <a href="{% url 'active_orders' %}">Заказы{% if unread_order_comments_count %}<span class="badge">{{ unread_order_comments_count }}</span>{% endif %}</a>
-        <a href="{% url 'analytics' %}">Графики</a>
         <a href="{% url 'upload_excel' %}">Загрузка Excel</a>
         {% if user.is_staff or user.is_superuser %}<a href="{% url 'managers_admin' %}">Менеджеры</a>{% endif %}
         <a href="{% url 'admin:index' %}">Админка</a>

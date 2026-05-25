@@ -1,6 +1,6 @@
 from django.db.models import Q
 
-from portfolio.models import Client, Manager
+from portfolio.models import Client, Manager, Order
 
 
 OWNER_GROUPS = {'owner', 'owners', 'admin', 'admins', 'владелец', 'администратор'}
@@ -50,3 +50,9 @@ def clients_for_manager(manager, as_of=None):
             | Q(manager_assignments__valid_to__gte=as_of)
         )
     return Client.objects.filter(assignment_filter).distinct()
+
+
+def orders_for_user(user):
+    if is_owner(user):
+        return Order.objects.all()
+    return Order.objects.filter(client__in=visible_clients_for_user(user))

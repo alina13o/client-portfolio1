@@ -14,7 +14,7 @@ from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import Coalesce
 import re
 
-from portfolio.forms import ClientForm, ClientPeriodFactForm, ExcelImportForm, ManagerForm, PeriodComparisonForm
+from portfolio.forms import ClientForm, ClientPeriodFactForm, ExcelImportForm, ManagerForm, OrderForm, PeriodComparisonForm
 from portfolio.models import (
     Client,
     ClientComment,
@@ -26,7 +26,7 @@ from portfolio.models import (
     OrderComment,
     OrderStage,
 )
-from portfolio.services.access import clients_for_manager, is_owner, manager_for_user, visible_clients_for_user
+from portfolio.services.access import clients_for_manager, is_owner, manager_for_user, orders_for_user, visible_clients_for_user
 from portfolio.services.analytics import (
     Period,
     client_monthly_revenue,
@@ -76,6 +76,7 @@ def manager_dashboard(request):
         {
             'manager': manager,
             'chart_api_url': f'/api/dashboard/charts/?manager_id={manager.id}',
+            'total_revenue_all_time': _total_revenue_for_clients(clients_qs),
             'active_orders': _active_orders_for_user(request.user)[:8],
             'readonly': False,
         },
@@ -97,6 +98,7 @@ def owner_dashboard(request):
             'ranking': manager_ranking(period_2),
             'form': form,
             'chart_api_url': '/api/dashboard/charts/',
+            'total_revenue_all_time': _total_revenue_for_clients(Client.objects.all()),
         },
     )
 
@@ -114,6 +116,7 @@ def owner_manager_detail(request, manager_id):
         {
             'manager': manager,
             'chart_api_url': f'/api/dashboard/charts/?manager_id={manager.id}',
+            'total_revenue_all_time': _total_revenue_for_clients(clients_qs),
             'active_orders': _active_orders_for_manager(manager)[:8],
             'readonly': True,
         },
@@ -184,6 +187,7 @@ def client_detail(request, client_id):
     assignment = current_manager_for_client(client)
     notifications = Notification.objects.filter(recipient=request.user, client=client, is_read=False)
     notifications.update(is_read=True, read_at=timezone.now())
+    comments = client.comments.select_related('author')
     return render(
         request,
         'portfolio/client_detail.html',
@@ -195,7 +199,10 @@ def client_detail(request, client_id):
             'monthly_revenue': monthly_revenue,
             'client_form': ClientForm(instance=client, user=request.user),
             'fact_form': ClientPeriodFactForm(),
-            'comments': client.comments.select_related('author')[:50],
+            'comments': comments[:5],
+            'hidden_comments': comments[5:50],
+            'comments_count': comments.count(),
+            'hidden_comments_count': max(comments.count() - 5, 0),
             'active_projects': _active_projects_for_client(client),
             'can_delete_orders': is_owner(request.user),
         },
@@ -380,12 +387,69 @@ def validate_client_api(request):
 
 @login_required
 def active_orders(request):
-    orders = _active_orders_for_user(request.user)
+    status_filter = request.GET.get('status', 'all')
+    orders = _orders_for_user_list(request.user, status_filter)
+    order_form = OrderForm(user=request.user)
+    managers = Manager.objects.filter(is_active=True).order_by('full_name') if is_owner(request.user) else []
     Notification.objects.filter(recipient=request.user, kind=Notification.Kind.ORDER_COMMENT, is_read=False).update(
         is_read=True,
         read_at=timezone.now(),
     )
-    return render(request, 'portfolio/active_orders.html', {'orders': orders})
+    return render(
+        request,
+        'portfolio/active_orders.html',
+        {
+            'orders': orders,
+            'order_form': order_form,
+            'managers': managers,
+            'selected_status': status_filter,
+            'can_assign_manager': is_owner(request.user),
+        },
+    )
+
+
+@login_required
+@require_POST
+def order_create(request):
+    form = OrderForm(request.POST, user=request.user)
+    if not form.is_valid():
+        messages.error(request, _form_error_text(form, 'Не удалось создать заказ.'))
+        return redirect('active_orders')
+    order = form.save()
+    _ensure_default_stages(order)
+    manager = form.cleaned_data.get('manager') if is_owner(request.user) else manager_for_user(request.user)
+    if manager:
+        _assign_client_manager(order.client, manager)
+    comment = form.cleaned_data.get('initial_comment')
+    if comment:
+        OrderComment.objects.create(order=order, author=request.user, text=comment)
+    messages.success(request, f'Заказ #{order.id} создан.')
+    return redirect(f'/orders/active/#order-{order.id}')
+
+
+@login_required
+@require_POST
+def order_update(request, order_id):
+    order = _visible_order_or_404(request.user, order_id)
+    form = OrderForm(request.POST, instance=order, user=request.user)
+    if form.is_valid():
+        form.save()
+        messages.success(request, f'Заказ #{order.id} сохранен.')
+    else:
+        messages.error(request, _form_error_text(form, 'Не удалось сохранить заказ.'))
+    return redirect(f'/orders/active/#order-{order.id}')
+
+
+@login_required
+@require_POST
+def order_assign_manager(request, order_id):
+    if not is_owner(request.user):
+        return HttpResponseForbidden('Переназначать менеджера может только владелец.')
+    order = _visible_order_or_404(request.user, order_id)
+    manager = get_object_or_404(Manager, id=request.POST.get('manager'), is_active=True)
+    _assign_client_manager(order.client, manager)
+    messages.success(request, f'Клиент заказа #{order.id} переназначен на {manager.full_name}.')
+    return redirect(f'/orders/active/#order-{order.id}')
 
 
 @login_required
@@ -457,7 +521,8 @@ def order_stage_toggle(request, order_id, stage_id):
     stage.is_done = is_done
     stage.completed_at = timezone.now() if is_done else None
     stage.save(update_fields=['is_done', 'completed_at', 'updated_at'])
-    return JsonResponse({'stage': _stage_payload(stage), 'progress': _order_progress(order)})
+    order._prefetched_objects_cache = {}
+    return JsonResponse({'stage': _stage_payload(stage), 'progress': _order_progress(order), 'current_stage': _stage_payload(_current_order_stage(order))})
 
 
 @login_required
@@ -467,8 +532,12 @@ def order_stage_create(request, order_id):
     title = request.POST.get('title', '').strip()
     if not title:
         return JsonResponse({'error': 'Название стадии пустое.'}, status=400)
-    position = order.stages.aggregate(max_position=Max('position'))['max_position']
-    stage = OrderStage.objects.create(order=order, title=title, position=(position or 0) + 1)
+    insert_at = request.POST.get('insert_at', 'end')
+    after_id = request.POST.get('position_after')
+    position = _next_stage_position(order, insert_at, after_id)
+    OrderStage.objects.filter(order=order, position__gte=position).update(position=F('position') + 1)
+    stage = OrderStage.objects.create(order=order, title=title, position=position)
+    order._prefetched_objects_cache = {}
     return JsonResponse({'stage': _stage_payload(stage), 'progress': _order_progress(order)})
 
 
@@ -478,7 +547,30 @@ def order_stage_delete(request, order_id, stage_id):
     order = _visible_order_or_404(request.user, order_id)
     stage = get_object_or_404(OrderStage, id=stage_id, order=order)
     stage.delete()
+    order._prefetched_objects_cache = {}
+    _normalize_stage_positions(order)
     return JsonResponse({'ok': True, 'progress': _order_progress(order)})
+
+
+@login_required
+@require_POST
+def order_stage_move(request, order_id, stage_id):
+    order = _visible_order_or_404(request.user, order_id)
+    stage = get_object_or_404(OrderStage, id=stage_id, order=order)
+    direction = request.POST.get('direction')
+    if direction not in {'up', 'down'}:
+        return JsonResponse({'error': 'Некорректное направление.'}, status=400)
+    stages = list(order.stages.order_by('position', 'id'))
+    index = next((idx for idx, item in enumerate(stages) if item.id == stage.id), None)
+    target_index = index - 1 if direction == 'up' else index + 1
+    if index is None or target_index < 0 or target_index >= len(stages):
+        return JsonResponse({'ok': True, 'stages': [_stage_payload(item) for item in stages]})
+    other = stages[target_index]
+    stage.position, other.position = other.position, stage.position
+    stage.save(update_fields=['position', 'updated_at'])
+    other.save(update_fields=['position', 'updated_at'])
+    order._prefetched_objects_cache = {}
+    return JsonResponse({'ok': True, 'stages': [_stage_payload(item) for item in order.stages.order_by('position', 'id')]})
 
 
 @login_required
@@ -791,6 +883,17 @@ def _dashboard_chart_payload(client_ids):
     }
 
 
+def _total_revenue_for_clients(clients):
+    client_ids = list(clients.values_list('id', flat=True))
+    fact_revenue = ClientPeriodFact.objects.filter(client_id__in=client_ids).aggregate(
+        value=Coalesce(Sum('revenue'), Decimal('0'))
+    )['value']
+    order_revenue = Order.objects.filter(client_id__in=client_ids).exclude(status=Order.Status.CANCELLED).aggregate(
+        value=Coalesce(Sum('amount'), Decimal('0'))
+    )['value']
+    return fact_revenue + order_revenue
+
+
 def _add_month(value):
     if value.month == 12:
         return date(value.year + 1, 1, 1)
@@ -811,6 +914,33 @@ def _active_orders_for_user(user):
 
 def _active_orders_for_manager(manager):
     return _active_orders_queryset(Order.objects.filter(client__in=clients_for_manager(manager)))
+
+
+def _orders_for_user_list(user, status_filter='all'):
+    queryset = (
+        orders_for_user(user)
+        .exclude(status__in=[Order.Status.CANCELLED, Order.Status.CANCELLED_AFTER_PRODUCTION])
+        .select_related('client')
+        .prefetch_related('stages', 'comments__author', 'client__manager_assignments__manager')
+        .order_by('-created_at')
+    )
+    orders = []
+    for order in queryset:
+        _ensure_default_stages(order)
+        order.progress = _order_progress(order)
+        order.current_stage = _current_order_stage(order)
+        order.manager = _manager_for_order(order)
+        order.is_active_project = _is_active_order(order)
+        order.visible_comments = list(order.comments.select_related('author').all()[:5])
+        order.hidden_comments_count = max(order.comments.count() - 5, 0)
+        if status_filter == 'active' and not order.is_active_project:
+            continue
+        if status_filter == 'shipped' and (not order.current_stage or order.current_stage.title.strip().lower() != 'отгружен'):
+            continue
+        if status_filter == 'closed' and (not order.current_stage or order.current_stage.title.strip().lower() != 'закрыт'):
+            continue
+        orders.append(order)
+    return orders
 
 
 def _active_orders_queryset(queryset):
@@ -850,6 +980,39 @@ def _ensure_default_stages(order):
     )
 
 
+def _normalize_stage_positions(order):
+    for index, stage in enumerate(order.stages.order_by('position', 'id'), start=1):
+        if stage.position != index:
+            stage.position = index
+            stage.save(update_fields=['position', 'updated_at'])
+
+
+def _next_stage_position(order, insert_at, after_id):
+    if insert_at == 'start':
+        return 1
+    if insert_at == 'after' and after_id:
+        try:
+            previous = order.stages.get(id=after_id)
+            return previous.position + 1
+        except OrderStage.DoesNotExist:
+            pass
+    max_position = order.stages.aggregate(max_position=Max('position'))['max_position'] or 0
+    return max_position + 1
+
+
+def _assign_client_manager(client, manager):
+    today = timezone.localdate()
+    active = ClientManagerAssignment.objects.filter(client=client, valid_to__isnull=True)
+    active.exclude(manager=manager).filter(valid_from__lt=today).update(valid_to=today - timedelta(days=1))
+    active.exclude(manager=manager).filter(valid_from__gte=today).delete()
+    ClientManagerAssignment.objects.update_or_create(
+        client=client,
+        manager=manager,
+        valid_from=today,
+        defaults={'valid_to': None},
+    )
+
+
 def _order_progress(order):
     stages = list(order.stages.all())
     total = len(stages)
@@ -859,10 +1022,10 @@ def _order_progress(order):
 
 def _current_order_stage(order):
     stages = list(order.stages.all())
-    for stage in stages:
-        if not stage.is_done:
-            return stage
-    return stages[-1] if stages else None
+    done_stages = [stage for stage in stages if stage.is_done]
+    if done_stages:
+        return done_stages[-1]
+    return stages[0] if stages else None
 
 
 def _manager_for_order(order):
