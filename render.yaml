@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn client_portfolio.wsgi:application"
+    startCommand: "python manage.py migrate && python manage.py ensure_default_users && python manage.py prepare_demo_database && gunicorn client_portfolio.wsgi:application"
     envVars:
       - key: DJANGO_SECRET_KEY
         generateValue: true
@@ -13,7 +13,7 @@ services:
       - key: USE_SQLITE
         value: "True"
       - key: SQLITE_DB_NAME
-        value: "render_demo.sqlite3"
+        value: "/tmp/render_demo.sqlite3"
       - key: DJANGO_ALLOWED_HOSTS
         value: ".onrender.com"
       - key: CSRF_TRUSTED_ORIGINS
