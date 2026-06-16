@@ -430,7 +430,7 @@ def validate_client_api(request):
 def active_orders(request):
     status_filter = request.GET.get('status', 'all')
     orders = _orders_for_user_list(request.user, status_filter)
-    order_form = OrderForm(user=request.user)
+    order_form = OrderForm(user=request.user, require_manager=is_owner(request.user))
     managers = Manager.objects.filter(is_active=True).order_by('full_name') if is_owner(request.user) else []
     Notification.objects.filter(recipient=request.user, kind=Notification.Kind.ORDER_COMMENT, is_read=False).update(
         is_read=True,
@@ -452,7 +452,7 @@ def active_orders(request):
 @login_required
 @require_POST
 def order_create(request):
-    form = OrderForm(request.POST, user=request.user)
+    form = OrderForm(request.POST, user=request.user, require_manager=is_owner(request.user))
     if not form.is_valid():
         messages.error(request, _form_error_text(form, 'Не удалось создать заказ.'))
         return redirect('active_orders')
@@ -887,21 +887,50 @@ def _dashboard_chart_payload(client_ids):
     )
     for row in fact_rows:
         key = row['period_start'].replace(day=1)
-        monthly.setdefault(key, {'revenue': Decimal('0'), 'orders': 0, 'clients': set()})
+        monthly.setdefault(key, {'revenue': Decimal('0'), 'profit': Decimal('0'), 'orders': 0, 'clients': set(), 'details': []})
         monthly[key]['revenue'] += row['revenue']
+        monthly[key]['profit'] += row['revenue']
         monthly[key]['orders'] += row['orders'] or row['active_clients']
         monthly[key]['clients_count_from_facts'] = row['active_clients']
+        monthly[key]['details'].append(
+            {
+                'source': 'Помесячный факт',
+                'order_id': None,
+                'client': 'Портфельные данные',
+                'manager': '',
+                'date': row['period_start'].strftime('%d.%m.%Y'),
+                'revenue': float(row['revenue']),
+                'cost': 0,
+                'profit': float(row['revenue']),
+                'edit_url': '',
+            }
+        )
 
     order_rows = recognized_order_financial_rows(client_ids)
     for row in order_rows:
         key = row['date'].replace(day=1)
-        monthly.setdefault(key, {'revenue': Decimal('0'), 'orders': 0, 'clients': set()})
+        monthly.setdefault(key, {'revenue': Decimal('0'), 'profit': Decimal('0'), 'orders': 0, 'clients': set(), 'details': []})
+        manager_name = _manager_name_for_client(row['client_id'], row['date'])
         monthly[key]['revenue'] += row['revenue']
+        monthly[key]['profit'] += row['profit']
         monthly[key]['orders'] += row['orders']
         monthly[key]['clients'].add(row['client_id'])
+        monthly[key]['details'].append(
+            {
+                'source': 'Заказ',
+                'order_id': row['order_id'],
+                'client': row['client_name'],
+                'manager': manager_name,
+                'date': row['date'].strftime('%d.%m.%Y'),
+                'revenue': float(row['revenue']),
+                'cost': float(row['cost']),
+                'profit': float(row['profit']),
+                'edit_url': f'/orders/active/?status=all#order-{row["order_id"]}',
+            }
+        )
 
     if not monthly:
-        return {'labels': [], 'revenue': [], 'active_clients': [], 'average_check': [], 'growth_rate': []}
+        return {'labels': [], 'month_keys': [], 'revenue': [], 'profit': [], 'active_clients': [], 'average_check': [], 'growth_rate': [], 'details': {}}
 
     start = min(monthly)
     end = max(max(monthly), timezone.localdate().replace(day=1))
@@ -912,14 +941,18 @@ def _dashboard_chart_payload(client_ids):
         current = _add_month(current)
 
     labels = [_month_label(month) for month in months]
+    month_keys = [month.strftime('%Y-%m') for month in months]
     revenue_values = []
+    profit_values = []
     active_values = []
     average_values = []
     growth_values = []
+    details = {}
     previous_revenue = None
     for month in months:
-        item = monthly.get(month, {'revenue': Decimal('0'), 'orders': 0})
+        item = monthly.get(month, {'revenue': Decimal('0'), 'profit': Decimal('0'), 'orders': 0, 'details': []})
         revenue = item['revenue']
+        profit = item['profit']
         orders = item['orders'] or 0
         active = len(item.get('clients', set())) or item.get('clients_count_from_facts') or 0
         average = revenue / orders if orders else Decimal('0')
@@ -929,17 +962,33 @@ def _dashboard_chart_payload(client_ids):
             growth = ((revenue - previous_revenue) / previous_revenue) * Decimal('100')
         previous_revenue = revenue
         revenue_values.append(float(revenue))
+        profit_values.append(float(profit))
         active_values.append(active)
         average_values.append(float(average))
         growth_values.append(float(growth))
+        details[month.strftime('%Y-%m')] = sorted(item.get('details', []), key=lambda value: value['profit'], reverse=True)
 
     return {
         'labels': labels,
+        'month_keys': month_keys,
         'revenue': revenue_values,
+        'profit': profit_values,
         'active_clients': active_values,
         'average_check': average_values,
         'growth_rate': growth_values,
+        'details': details,
     }
+
+
+def _manager_name_for_client(client_id, as_of):
+    assignment = (
+        ClientManagerAssignment.objects.filter(client_id=client_id, valid_from__lte=as_of)
+        .filter(Q(valid_to__isnull=True) | Q(valid_to__gte=as_of))
+        .select_related('manager')
+        .order_by('-valid_from')
+        .first()
+    )
+    return assignment.manager.full_name if assignment else ''
 
 
 def _total_revenue_for_clients(clients):

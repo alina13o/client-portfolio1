@@ -6,7 +6,6 @@
     <h1>
       Портфель менеджера:
       <a href="#" class="manager-link" data-manager-id="{{ manager.id }}">{{ manager.full_name }}</a>
-      {% if readonly %}<span class="muted">View Only</span>{% endif %}
     </h1>
   </section>
 
@@ -16,24 +15,7 @@
     <div class="kpi"><span>Активных заказов сейчас</span><strong>{{ active_orders_count }}</strong></div>
   </section>
 
-  <section class="grid chart-grid">
-    <div class="panel chart-card">
-      <h2>Выручка</h2>
-      <canvas id="revenueChart"></canvas>
-    </div>
-    <div class="panel chart-card">
-      <h2>Активные клиенты</h2>
-      <canvas id="activeClientsChart"></canvas>
-    </div>
-    <div class="panel chart-card">
-      <h2>Средний чек</h2>
-      <canvas id="averageCheckChart"></canvas>
-    </div>
-    <div class="panel chart-card">
-      <h2>Динамика выручки</h2>
-      <canvas id="growthChart"></canvas>
-    </div>
-  </section>
+  {% include "portfolio/includes/dashboard_charts.html" %}
 
   <section class="panel">
     <div style="display:flex;justify-content:space-between;gap:16px;align-items:center;">
@@ -79,62 +61,4 @@
     </div>
   </section>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
-  <script>
-    const chartApiUrl = "{{ chart_api_url|escapejs }}";
-    const rub = (value) => window.formatMoney(value);
-    const zoomOptions = {
-      pan: { enabled: true, mode: 'x' },
-      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, drag: { enabled: true }, mode: 'x' }
-    };
-    const baseOptions = (tooltipLabel) => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (context) => tooltipLabel(context.parsed.y, context.label, context)
-          }
-        },
-        zoom: zoomOptions
-      },
-      scales: {
-        x: { grid: { display: false } },
-        y: { beginAtZero: true, ticks: { callback: (value) => Number(value).toLocaleString('ru-RU') } }
-      }
-    });
-    const createChart = (canvasId, config) => {
-      const chart = new Chart(document.getElementById(canvasId), config);
-      document.getElementById(canvasId).ondblclick = () => chart.resetZoom();
-      return chart;
-    };
-    fetch(chartApiUrl)
-      .then((response) => response.json())
-      .then(({ charts }) => {
-        createChart('revenueChart', {
-          type: 'line',
-          data: { labels: charts.labels, datasets: [{ data: charts.revenue, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true, pointRadius: 3 }] },
-          options: baseOptions((value, label) => `${label}: ${rub(value)}`)
-        });
-        createChart('activeClientsChart', {
-          type: 'line',
-          data: { labels: charts.labels, datasets: [{ data: charts.active_clients, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true, pointRadius: 3 }] },
-          options: baseOptions((value, label) => `${label}: ${value} активных клиентов`)
-        });
-        createChart('averageCheckChart', {
-          type: 'line',
-          data: { labels: charts.labels, datasets: [{ data: charts.average_check, borderColor: '#007aff', backgroundColor: 'rgba(0,122,255,.12)', tension: .38, fill: true, pointRadius: 3 }] },
-          options: baseOptions((value, label) => `${label}: средний чек ${rub(value)}`)
-        });
-        createChart('growthChart', {
-          type: 'bar',
-          data: { labels: charts.labels, datasets: [{ data: charts.growth_rate, backgroundColor: charts.growth_rate.map((value) => value >= 0 ? '#34c759' : '#ff3b30'), borderRadius: 8 }] },
-          options: baseOptions((value, label) => `${label}: ${value >= 0 ? '+' : ''}${value.toFixed(1)}% к прошлому месяцу`)
-        });
-      });
-  </script>
 {% endblock %}

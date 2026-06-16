@@ -1,0 +1,176 @@
+<section class="grid chart-grid dashboard-charts">
+  <div class="panel chart-card">
+    <div class="chart-head">
+      <h2>Выручка</h2>
+      <button type="button" class="chart-reset" data-reset-chart="revenueChart">Сбросить</button>
+    </div>
+    <canvas id="revenueChart"></canvas>
+  </div>
+  <div class="panel chart-card">
+    <div class="chart-head">
+      <h2>Прибыль</h2>
+      <button type="button" class="chart-reset" data-reset-chart="profitChart">Сбросить</button>
+    </div>
+    <canvas id="profitChart"></canvas>
+  </div>
+  <div class="panel chart-card">
+    <div class="chart-head">
+      <h2>Средний чек</h2>
+      <button type="button" class="chart-reset" data-reset-chart="averageCheckChart">Сбросить</button>
+    </div>
+    <canvas id="averageCheckChart"></canvas>
+  </div>
+  <div class="panel chart-card">
+    <div class="chart-head">
+      <h2>Динамика выручки</h2>
+      <button type="button" class="chart-reset" data-reset-chart="growthChart">Сбросить</button>
+    </div>
+    <canvas id="growthChart"></canvas>
+  </div>
+</section>
+
+<dialog id="profit-detail-modal" class="modal profit-detail-modal">
+  <div class="modal-body">
+    <div class="modal-title-row">
+      <div>
+        <h2 id="profit-detail-title">Детализация прибыли</h2>
+        <p class="muted" id="profit-detail-summary"></p>
+      </div>
+      <button type="button" onclick="document.getElementById('profit-detail-modal').close()">Закрыть</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Источник</th>
+            <th>Клиент</th>
+            <th>Менеджер</th>
+            <th>Дата</th>
+            <th class="number">Выручка</th>
+            <th class="number">Себестоимость</th>
+            <th class="number">Прибыль</th>
+          </tr>
+        </thead>
+        <tbody id="profit-detail-rows">
+          <tr><td colspan="7" class="muted">Выберите месяц на графике.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</dialog>
+
+<style>
+  .dashboard-charts .chart-card {
+    min-height: 390px;
+  }
+  .chart-head,
+  .modal-title-row {
+    align-items: flex-start;
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+  }
+  .chart-head h2 {
+    margin-bottom: 4px;
+  }
+  .chart-reset {
+    background: #f2f4f7;
+    color: #344054;
+    padding: 7px 10px;
+    width: auto;
+  }
+  .profit-detail-modal {
+    max-width: 1120px;
+  }
+  .profit-detail-modal table {
+    min-width: 900px;
+  }
+  .profit-detail-modal .button-link {
+    padding: 6px 9px;
+  }
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
+<script>
+  const chartApiUrl = "{{ chart_api_url|escapejs }}";
+  const chartsById = {};
+  const rub = (value) => window.formatMoney(value);
+  const escapeChartHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
+  const zoomOptions = {
+    pan: { enabled: true, mode: 'x' },
+    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, drag: { enabled: true }, mode: 'x' }
+  };
+  const openProfitDetail = (charts, index) => {
+    const key = charts.month_keys[index];
+    const rows = charts.details[key] || [];
+    const revenue = rows.reduce((sum, row) => sum + Number(row.revenue || 0), 0);
+    const cost = rows.reduce((sum, row) => sum + Number(row.cost || 0), 0);
+    const profit = rows.reduce((sum, row) => sum + Number(row.profit || 0), 0);
+    document.getElementById('profit-detail-title').textContent = `Детализация прибыли: ${charts.labels[index]}`;
+    document.getElementById('profit-detail-summary').textContent = `Выручка ${rub(revenue)} · Себестоимость ${rub(cost)} · Прибыль ${rub(profit)}`;
+    document.getElementById('profit-detail-rows').innerHTML = rows.length ? rows.map((row) => `
+      <tr>
+        <td>${row.edit_url ? `<a class="button-link" href="${escapeChartHtml(row.edit_url)}">Заказ #${escapeChartHtml(row.order_id)}</a>` : escapeChartHtml(row.source)}</td>
+        <td>${escapeChartHtml(row.client)}</td>
+        <td>${escapeChartHtml(row.manager || '—')}</td>
+        <td>${escapeChartHtml(row.date)}</td>
+        <td class="number">${rub(row.revenue)}</td>
+        <td class="number">${rub(row.cost)}</td>
+        <td class="number">${rub(row.profit)}</td>
+      </tr>
+    `).join('') : '<tr><td colspan="7" class="muted">Заказов за выбранный месяц нет.</td></tr>';
+    document.getElementById('profit-detail-modal').showModal();
+  };
+  const baseOptions = (charts, tooltipLabel) => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { intersect: false, mode: 'index' },
+    onClick: (event, elements) => {
+      if (elements.length) openProfitDetail(charts, elements[0].index);
+    },
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: (context) => tooltipLabel(context.parsed.y, context.label, context) } },
+      zoom: zoomOptions
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { maxRotation: 35, minRotation: 0 } },
+      y: { beginAtZero: true, ticks: { callback: (value) => Number(value).toLocaleString('ru-RU') } }
+    }
+  });
+  const createChart = (canvasId, config) => {
+    const chart = new Chart(document.getElementById(canvasId), config);
+    chartsById[canvasId] = chart;
+    document.getElementById(canvasId).ondblclick = () => chart.resetZoom();
+    return chart;
+  };
+  document.querySelectorAll('[data-reset-chart]').forEach((button) => {
+    button.addEventListener('click', () => chartsById[button.dataset.resetChart]?.resetZoom());
+  });
+  fetch(chartApiUrl)
+    .then((response) => response.json())
+    .then(({ charts }) => {
+      createChart('revenueChart', {
+        type: 'line',
+        data: { labels: charts.labels, datasets: [{ data: charts.revenue, borderColor: '#0b6bcb', backgroundColor: 'rgba(11,107,203,.10)', tension: .28, fill: true, pointRadius: 4, pointHoverRadius: 6 }] },
+        options: baseOptions(charts, (value, label) => `${label}: ${rub(value)}`)
+      });
+      createChart('profitChart', {
+        type: 'bar',
+        data: { labels: charts.labels, datasets: [{ data: charts.profit, backgroundColor: charts.profit.map((value) => value >= 0 ? 'rgba(18, 183, 106, .78)' : 'rgba(240, 68, 56, .78)'), borderRadius: 9 }] },
+        options: baseOptions(charts, (value, label) => `${label}: прибыль ${rub(value)}`)
+      });
+      createChart('averageCheckChart', {
+        type: 'line',
+        data: { labels: charts.labels, datasets: [{ data: charts.average_check, borderColor: '#7a5af8', backgroundColor: 'rgba(122,90,248,.10)', tension: .28, fill: true, pointRadius: 4, pointHoverRadius: 6 }] },
+        options: baseOptions(charts, (value, label) => `${label}: средний чек ${rub(value)}`)
+      });
+      createChart('growthChart', {
+        type: 'bar',
+        data: { labels: charts.labels, datasets: [{ data: charts.growth_rate, backgroundColor: charts.growth_rate.map((value) => value >= 0 ? '#12b76a' : '#f04438'), borderRadius: 9 }] },
+        options: baseOptions(charts, (value, label) => `${label}: ${value >= 0 ? '+' : ''}${value.toFixed(1)}% к прошлому месяцу`)
+      });
+    });
+</script>

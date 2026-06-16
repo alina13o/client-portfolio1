@@ -148,11 +148,13 @@ class OrderForm(forms.ModelForm):
             'order_date': forms.DateInput(attrs={'type': 'date'}),
         }
 
-    def __init__(self, *args, user=None, **kwargs):
+    def __init__(self, *args, user=None, require_manager=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.user = user
+        self.require_manager = require_manager
         self.fields['client'].queryset = visible_clients_for_user(user) if user else Client.objects.none()
         self.fields['manager'].queryset = Manager.objects.filter(is_active=True)
+        self.fields['manager'].required = require_manager
         if user and not is_owner(user):
             self.fields['manager'].widget = forms.HiddenInput()
             self.fields['manager'].required = False
@@ -162,6 +164,8 @@ class OrderForm(forms.ModelForm):
         client = cleaned_data.get('client')
         if self.user and client and not visible_clients_for_user(self.user).filter(id=client.id).exists():
             self.add_error('client', 'Недостаточно прав для этого клиента.')
+        if self.require_manager and not cleaned_data.get('manager'):
+            self.add_error('manager', 'Выберите менеджера для заказа.')
         return cleaned_data
 
 

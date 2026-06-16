@@ -293,6 +293,7 @@ def recognized_order_financial_rows(client_ids: list[int], period: Period | None
     rows = []
     queryset = (
         Order.objects.filter(client_id__in=client_ids, status=Order.Status.COMPLETED)
+        .select_related('client')
         .prefetch_related('stages')
         .order_by('order_date', 'id')
     )
@@ -305,8 +306,12 @@ def recognized_order_financial_rows(client_ids: list[int], period: Period | None
         rows.append(
             {
                 'client_id': order.client_id,
+                'client_name': order.client.name,
                 'date': financial_date,
+                'order_date': order.order_date,
+                'order_id': order.id,
                 'revenue': order.amount or ZERO,
+                'cost': order.cost_amount or ZERO,
                 'profit': (order.amount or ZERO) - (order.cost_amount or ZERO),
                 'orders': 1,
             }

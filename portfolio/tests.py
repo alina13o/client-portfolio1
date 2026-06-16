@@ -4,6 +4,8 @@ from io import BytesIO
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
+from django.db import models
 from django.test import TestCase
 import pandas as pd
 
@@ -221,3 +223,83 @@ class CrudValidationTests(TestCase):
         row = next(item for item in ranking if item['manager'].id == manager.id)
         self.assertEqual(row['revenue'], Decimal('120000.00'))
         self.assertEqual(row['profit'], Decimal('50000.00'))
+
+    def test_dashboard_chart_api_returns_profit_details_with_order_link(self):
+        manager_user = User.objects.create_user(username='detail-manager', password='secret')
+        manager = Manager.objects.create(user=manager_user, full_name='Детальный менеджер', email='detail@example.com')
+        client = Client.objects.create(name='ООО Детализация', inn='7700000105')
+        ClientManagerAssignment.objects.create(client=client, manager=manager, valid_from=date(2026, 1, 1))
+        order = Order.objects.create(
+            client=client,
+            order_date=date(2026, 4, 5),
+            amount=Decimal('90000.00'),
+            cost_amount=Decimal('55000.00'),
+        )
+        OrderStage.objects.create(order=order, title='Закрыт', position=1, is_done=True)
+
+        self.client.force_login(manager_user)
+        response = self.client.get(f'/api/dashboard/charts/?manager_id={manager.id}')
+
+        self.assertEqual(response.status_code, 200)
+        charts = response.json()['charts']
+        self.assertIn('2026-04', charts['details'])
+        detail = next(row for row in charts['details']['2026-04'] if row['order_id'] == order.id)
+        self.assertEqual(detail['profit'], 35000.0)
+        self.assertEqual(detail['edit_url'], f'/orders/active/?status=all#order-{order.id}')
+
+    def test_owner_must_choose_manager_when_creating_order(self):
+        client = Client.objects.create(name='ООО Без менеджера', inn='7700000106')
+
+        response = self.client.post(
+            '/orders/new/',
+            {
+                'client': client.id,
+                'order_date': '2026-05-10',
+                'amount': '50000',
+                'cost_amount': '30000',
+                'positions_count': '2',
+                'nomenclature_group': 'Услуги',
+                'status': Order.Status.COMPLETED,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Order.objects.filter(client=client).exists())
+
+    def test_manager_order_creation_assigns_client_to_manager(self):
+        manager_user = User.objects.create_user(username='auto-manager', password='secret')
+        manager = Manager.objects.create(user=manager_user, full_name='Авто менеджер', email='auto@example.com')
+        client = Client.objects.create(name='ООО Автоназначение', inn='7700000107')
+        ClientManagerAssignment.objects.create(client=client, manager=manager, valid_from=date(2026, 1, 1))
+        self.client.force_login(manager_user)
+
+        response = self.client.post(
+            '/orders/new/',
+            {
+                'client': client.id,
+                'order_date': '2026-05-10',
+                'amount': '50000',
+                'cost_amount': '30000',
+                'positions_count': '2',
+                'nomenclature_group': 'Услуги',
+                'status': Order.Status.COMPLETED,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Order.objects.filter(client=client).exists())
+        self.assertTrue(ClientManagerAssignment.objects.filter(client=client, manager=manager, valid_to__isnull=True).exists())
+
+    def test_demo_preparation_leaves_orders_with_manager_assignments(self):
+        call_command('prepare_demo_database', verbosity=0)
+        orders_without_manager = []
+        for order in Order.objects.select_related('client').all():
+            has_manager = ClientManagerAssignment.objects.filter(
+                client=order.client,
+                valid_from__lte=order.order_date,
+            ).filter(models.Q(valid_to__isnull=True) | models.Q(valid_to__gte=order.order_date)).exists()
+            if not has_manager:
+                orders_without_manager.append(order.id)
+
+        self.assertEqual(orders_without_manager, [])
+        self.assertTrue(Order.objects.filter(created_at__date__lt=date(2026, 6, 16)).exists())
