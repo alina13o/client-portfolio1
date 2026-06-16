@@ -1,9 +1,3 @@
-databases:
-  - name: client-portfolio-db
-    plan: free
-    databaseName: client_portfolio
-    user: portfolio_user
-
 services:
   - type: web
     name: client-portfolio
@@ -12,14 +6,14 @@ services:
     buildCommand: "./build.sh"
     startCommand: "gunicorn client_portfolio.wsgi:application"
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: client-portfolio-db
-          property: connectionString
       - key: DJANGO_SECRET_KEY
         generateValue: true
       - key: DJANGO_DEBUG
         value: "False"
+      - key: USE_SQLITE
+        value: "True"
+      - key: SQLITE_DB_NAME
+        value: "render_demo.sqlite3"
       - key: DJANGO_ALLOWED_HOSTS
         value: ".onrender.com"
       - key: CSRF_TRUSTED_ORIGINS
