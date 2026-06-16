@@ -256,6 +256,8 @@
     .messages li { padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; }
     .messages .success { background: #ecfdf3; color: var(--success); }
     .messages .error { background: #fef3f2; color: var(--danger); }
+    .alert { padding: 10px 12px; border-radius: 6px; margin: 0 0 16px; }
+    .alert.error { background: #fef3f2; color: var(--danger); }
     @media (max-width: 720px) {
       header { align-items: flex-start; flex-direction: column; }
       main { padding: 16px; }
@@ -302,6 +304,7 @@
         <div class="kpi"><span>Возраст</span><strong id="manager-summary-age">—</strong></div>
         <div class="kpi"><span>Активных заказов</span><strong id="manager-summary-active-orders">—</strong></div>
         <div class="kpi"><span>Выручка</span><strong id="manager-summary-revenue">—</strong></div>
+        <div class="kpi"><span>Прибыль</span><strong id="manager-summary-profit">—</strong></div>
       </div>
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
         <a class="button-link" id="manager-summary-link" href="#">Перейти к портфелю</a>
@@ -324,6 +327,7 @@
       document.getElementById('manager-summary-age').textContent = data.age || '—';
       document.getElementById('manager-summary-active-orders').textContent = data.active_orders_count;
       document.getElementById('manager-summary-revenue').textContent = window.formatMoney(data.revenue_total);
+      document.getElementById('manager-summary-profit').textContent = window.formatMoney(data.profit_total);
       document.getElementById('manager-summary-link').href = data.portfolio_url;
       document.getElementById('manager-summary-modal').showModal();
     });

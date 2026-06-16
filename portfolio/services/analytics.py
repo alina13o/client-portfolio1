@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db.models import Count, DecimalField, ExpressionWrapper, F, Max, Q, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -13,6 +13,7 @@ from portfolio.services.access import clients_for_manager, is_owner, manager_for
 
 
 ZERO = Decimal('0.00')
+CLOSED_STAGE_TITLE = 'закрыт'
 
 
 @dataclass
@@ -259,25 +260,7 @@ def current_manager_for_client(client: Client, as_of: date | None = None):
 
 
 def _period_metrics(client_ids: list[int], period: Period) -> dict[int, dict]:
-    profit_expr = ExpressionWrapper(
-        F('amount') - F('cost_amount'),
-        output_field=DecimalField(max_digits=14, decimal_places=2),
-    )
-    order_metrics = {
-        row['client_id']: {
-            'revenue': row['revenue'] or ZERO,
-            'profit': row['profit'] or ZERO,
-            'orders': row['orders'] or 0,
-        }
-        for row in Order.objects.filter(
-            client_id__in=client_ids,
-            order_date__gte=period.start,
-            order_date__lte=period.end,
-            status=Order.Status.COMPLETED,
-        )
-        .values('client_id')
-        .annotate(revenue=Sum('amount'), profit=Sum(profit_expr), orders=Count('id'))
-    }
+    order_metrics = _recognized_order_metrics(client_ids, period)
 
     fact_metrics = {
         row['client_id']: {
@@ -304,6 +287,56 @@ def _period_metrics(client_ids: list[int], period: Period) -> dict[int, dict]:
             'orders': order_row['orders'] + fact_row['orders'],
         }
     return metrics
+
+
+def recognized_order_financial_rows(client_ids: list[int], period: Period | None = None) -> list[dict]:
+    rows = []
+    queryset = (
+        Order.objects.filter(client_id__in=client_ids, status=Order.Status.COMPLETED)
+        .prefetch_related('stages')
+        .order_by('order_date', 'id')
+    )
+    for order in queryset:
+        financial_date = _order_financial_date(order)
+        if not financial_date:
+            continue
+        if period and (financial_date < period.start or financial_date > period.end):
+            continue
+        rows.append(
+            {
+                'client_id': order.client_id,
+                'date': financial_date,
+                'revenue': order.amount or ZERO,
+                'profit': (order.amount or ZERO) - (order.cost_amount or ZERO),
+                'orders': 1,
+            }
+        )
+    return rows
+
+
+def _recognized_order_metrics(client_ids: list[int], period: Period) -> dict[int, dict]:
+    metrics = {}
+    for row in recognized_order_financial_rows(client_ids, period):
+        client_metrics = metrics.setdefault(row['client_id'], _empty_metrics())
+        client_metrics['revenue'] += row['revenue']
+        client_metrics['profit'] += row['profit']
+        client_metrics['orders'] += row['orders']
+    return metrics
+
+
+def _order_financial_date(order: Order) -> date | None:
+    stages = list(order.stages.all())
+    if not stages:
+        return order.order_date
+    closed_stages = [
+        stage
+        for stage in stages
+        if stage.is_done and stage.title.strip().lower() == CLOSED_STAGE_TITLE
+    ]
+    if not closed_stages:
+        return None
+    closed_stage = sorted(closed_stages, key=lambda item: (item.position, item.id))[-1]
+    return closed_stage.completed_at.date() if closed_stage.completed_at else order.order_date
 
 
 def _portfolio_kpis(clients, today: date, plan: Decimal) -> dict:

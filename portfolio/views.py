@@ -5,10 +5,12 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
-from django.db.models import Case, DecimalField, ExpressionWrapper, F, Value, When
+from django.db import transaction
+from django.db.models import F
 from django.http import HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import Coalesce
@@ -38,6 +40,7 @@ from portfolio.services.analytics import (
     period_from_preset,
     portfolio_kpis_for_manager,
     portfolio_kpis_for_owner,
+    recognized_order_financial_rows,
 )
 from portfolio.services.importer import import_excel_workbook
 
@@ -53,6 +56,18 @@ DEFAULT_ORDER_STAGES = [
     'Отгружен',
     'Закрыт',
 ]
+
+
+def csrf_failure(request, reason=''):
+    if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+        return JsonResponse(
+            {'error': 'Сессия устарела. Обновите страницу и повторите действие.'},
+            status=403,
+        )
+    messages.error(request, 'Сессия устарела. Обновите страницу и повторите действие.')
+    if request.user.is_authenticated:
+        return redirect('dashboard')
+    return redirect('login')
 
 
 @login_required
@@ -411,6 +426,7 @@ def validate_client_api(request):
 
 
 @login_required
+@ensure_csrf_cookie
 def active_orders(request):
     status_filter = request.GET.get('status', 'all')
     orders = _orders_for_user_list(request.user, status_filter)
@@ -540,14 +556,37 @@ def order_comment_delete(request, order_id, comment_id):
 @login_required
 @require_POST
 def order_stage_toggle(request, order_id, stage_id):
-    order = _visible_order_or_404(request.user, order_id)
-    stage = get_object_or_404(OrderStage, id=stage_id, order=order)
-    is_done = request.POST.get('is_done') == 'true'
-    stage.is_done = is_done
-    stage.completed_at = timezone.now() if is_done else None
-    stage.save(update_fields=['is_done', 'completed_at', 'updated_at'])
-    order._prefetched_objects_cache = {}
-    return JsonResponse({'stage': _stage_payload(stage), 'progress': _order_progress(order), 'current_stage': _stage_payload(_current_order_stage(order))})
+    with transaction.atomic():
+        order = _visible_order_or_404(request.user, order_id)
+        stage = get_object_or_404(OrderStage.objects.select_for_update(), id=stage_id, order=order)
+        is_done = request.POST.get('is_done') == 'true'
+        now = timezone.now()
+        stages = list(order.stages.select_for_update().order_by('position', 'id'))
+        for item in stages:
+            if is_done and item.position <= stage.position:
+                if not item.is_done:
+                    item.is_done = True
+                    item.completed_at = now
+                elif item.id == stage.id and item.completed_at is None:
+                    item.completed_at = now
+            elif not is_done and item.position >= stage.position:
+                item.is_done = False
+                item.completed_at = None
+            item.updated_at = now
+        OrderStage.objects.bulk_update(stages, ['is_done', 'completed_at', 'updated_at'])
+        order._prefetched_objects_cache = {}
+        current_stage = _current_order_stage(order)
+        order.status = _status_from_stages(order)
+        order.save(update_fields=['status', 'updated_at'])
+    return JsonResponse(
+        {
+            'stage': _stage_payload(next(item for item in stages if item.id == stage.id)),
+            'stages': [_stage_payload(item) for item in stages],
+            'progress': _order_progress(order),
+            'current_stage': _stage_payload(current_stage),
+            'is_active_project': _is_active_order(order),
+        }
+    )
 
 
 @login_required
@@ -605,10 +644,8 @@ def manager_summary_api(request, manager_id):
     if not is_owner(request.user) and manager_for_user(request.user) != manager:
         return HttpResponseForbidden('Недостаточно прав.')
     clients = clients_for_manager(manager)
-    client_ids = list(clients.values_list('id', flat=True))
     active_orders_count = len(_active_orders_for_manager(manager))
-    facts_revenue = ClientPeriodFact.objects.filter(client_id__in=client_ids).aggregate(value=Coalesce(Sum('revenue'), Decimal('0')))['value']
-    orders_revenue = Order.objects.filter(client_id__in=client_ids).exclude(status=Order.Status.CANCELLED).aggregate(value=Coalesce(Sum('amount'), Decimal('0')))['value']
+    totals = _financial_totals_for_clients(clients)
     return JsonResponse(
         {
             'id': manager.id,
@@ -618,7 +655,8 @@ def manager_summary_api(request, manager_id):
             'age': manager.age,
             'clients_count': clients.count(),
             'active_orders_count': active_orders_count,
-            'revenue_total': float(facts_revenue + orders_revenue),
+            'revenue_total': float(totals['revenue']),
+            'profit_total': float(totals['profit']),
             'portfolio_url': f'/owner/dashboard/manager/{manager.id}/' if is_owner(request.user) else '/manager/dashboard/',
         }
     )
@@ -854,19 +892,13 @@ def _dashboard_chart_payload(client_ids):
         monthly[key]['orders'] += row['orders'] or row['active_clients']
         monthly[key]['clients_count_from_facts'] = row['active_clients']
 
-    order_rows = (
-        Order.objects.filter(client_id__in=client_ids)
-        .exclude(status=Order.Status.CANCELLED)
-        .values('order_date')
-        .annotate(revenue=Coalesce(Sum('amount'), Decimal('0')), orders=Count('id'), active_clients=Count('client', distinct=True))
-        .order_by('order_date')
-    )
+    order_rows = recognized_order_financial_rows(client_ids)
     for row in order_rows:
-        key = row['order_date'].replace(day=1)
+        key = row['date'].replace(day=1)
         monthly.setdefault(key, {'revenue': Decimal('0'), 'orders': 0, 'clients': set()})
         monthly[key]['revenue'] += row['revenue']
         monthly[key]['orders'] += row['orders']
-        monthly[key]['clients_count_from_orders'] = row['active_clients']
+        monthly[key]['clients'].add(row['client_id'])
 
     if not monthly:
         return {'labels': [], 'revenue': [], 'active_clients': [], 'average_check': [], 'growth_rate': []}
@@ -889,7 +921,7 @@ def _dashboard_chart_payload(client_ids):
         item = monthly.get(month, {'revenue': Decimal('0'), 'orders': 0})
         revenue = item['revenue']
         orders = item['orders'] or 0
-        active = item.get('clients_count_from_orders') or item.get('clients_count_from_facts') or 0
+        active = len(item.get('clients', set())) or item.get('clients_count_from_facts') or 0
         average = revenue / orders if orders else Decimal('0')
         if previous_revenue is None or previous_revenue == 0:
             growth = Decimal('0')
@@ -919,17 +951,12 @@ def _financial_totals_for_clients(clients):
     fact_revenue = ClientPeriodFact.objects.filter(client_id__in=client_ids).aggregate(
         value=Coalesce(Sum('revenue'), Decimal('0'))
     )['value']
-    profit_expr = ExpressionWrapper(
-        F('amount') - F('cost_amount'),
-        output_field=DecimalField(max_digits=14, decimal_places=2),
-    )
-    order_totals = Order.objects.filter(client_id__in=client_ids).exclude(status=Order.Status.CANCELLED).aggregate(
-        revenue=Coalesce(Sum('amount'), Decimal('0')),
-        profit=Coalesce(Sum(profit_expr), Decimal('0')),
-    )
+    order_rows = recognized_order_financial_rows(client_ids)
+    order_revenue = sum((row['revenue'] for row in order_rows), Decimal('0'))
+    order_profit = sum((row['profit'] for row in order_rows), Decimal('0'))
     return {
-        'revenue': fact_revenue + order_totals['revenue'],
-        'profit': fact_revenue + order_totals['profit'],
+        'revenue': fact_revenue + order_revenue,
+        'profit': fact_revenue + order_profit,
     }
 
 
@@ -1009,6 +1036,12 @@ def _is_active_order(order):
     if not stage:
         return order.status not in [Order.Status.CANCELLED, Order.Status.CANCELLED_AFTER_PRODUCTION]
     return stage.title.strip().lower() not in {'закрыт', 'отгружен'}
+
+
+def _status_from_stages(order):
+    if order.status in [Order.Status.CANCELLED, Order.Status.CANCELLED_AFTER_PRODUCTION]:
+        return order.status
+    return Order.Status.COMPLETED
 
 
 def _ensure_default_stages(order):

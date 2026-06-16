@@ -9,7 +9,7 @@ import pandas as pd
 
 from portfolio.models import Client, ClientManagerAssignment, ClientComment, Manager, Order, OrderComment, OrderStage
 from portfolio.services.access import visible_clients_for_user
-from portfolio.services.analytics import Period, compare_periods
+from portfolio.services.analytics import Period, compare_periods, manager_ranking
 from portfolio.services.importer import import_excel_workbook
 
 
@@ -188,3 +188,36 @@ class CrudValidationTests(TestCase):
         response = self.client.get('/orders/active/?status=all')
 
         self.assertContains(response, f'#{order.id}')
+
+    def test_order_appears_in_financial_analytics_after_closed_stage(self):
+        manager_user = User.objects.create_user(username='finance-manager', password='secret')
+        manager = Manager.objects.create(user=manager_user, full_name='Финансовый менеджер', email='finance@example.com')
+        client = Client.objects.create(name='ООО Финансы', inn='7700000104')
+        ClientManagerAssignment.objects.create(client=client, manager=manager, valid_from=date(2026, 1, 1))
+        order = Order.objects.create(
+            client=client,
+            order_date=date(2026, 5, 1),
+            amount=Decimal('120000.00'),
+            cost_amount=Decimal('70000.00'),
+        )
+        stages = [
+            OrderStage.objects.create(order=order, title='Новый', position=1),
+            OrderStage.objects.create(order=order, title='Закрыт', position=2),
+        ]
+
+        self.client.force_login(manager_user)
+        before = self.client.get(f'/api/dashboard/charts/?manager_id={manager.id}')
+        self.assertNotIn(120000.0, before.json()['charts']['revenue'])
+
+        response = self.client.post(f'/orders/{order.id}/stages/{stages[1].id}/toggle/', {'is_done': 'true'})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['current_stage']['title'], 'Закрыт')
+        self.assertFalse(payload['is_active_project'])
+        after = self.client.get(f'/api/dashboard/charts/?manager_id={manager.id}')
+        self.assertIn(120000.0, after.json()['charts']['revenue'])
+        ranking = manager_ranking(Period(date(1900, 1, 1), date.today()))
+        row = next(item for item in ranking if item['manager'].id == manager.id)
+        self.assertEqual(row['revenue'], Decimal('120000.00'))
+        self.assertEqual(row['profit'], Decimal('50000.00'))

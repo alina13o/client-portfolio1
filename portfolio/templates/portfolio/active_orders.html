@@ -165,59 +165,115 @@
   </dialog>
 
   <script>
-    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value;
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+      || document.cookie.split('; ').find((row) => row.startsWith('csrftoken='))?.split('=')[1];
     const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
+    const showRequestError = (message) => {
+      const panel = document.createElement('div');
+      panel.className = 'alert error';
+      panel.textContent = message || 'Действие не выполнено. Обновите страницу и повторите попытку.';
+      document.querySelector('main')?.prepend(panel);
+      setTimeout(() => panel.remove(), 7000);
+    };
+    const postForm = async (url, body) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRFToken': csrfToken || '', 'X-Requested-With': 'XMLHttpRequest' },
+        body,
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (error) {
+        payload = {};
+      }
+      if (!response.ok) {
+        throw new Error(payload.error || `Ошибка запроса (${response.status}). Обновите страницу и повторите действие.`);
+      }
+      return payload;
+    };
     const updateProgress = (orderId, progress, currentStage) => {
       document.getElementById(`progress-bar-${orderId}`).style.width = `${progress.percent}%`;
       document.getElementById(`progress-text-${orderId}`).textContent = `${progress.done}/${progress.total}`;
       if (currentStage && document.getElementById(`current-stage-${orderId}`)) document.getElementById(`current-stage-${orderId}`).textContent = currentStage.title;
+    };
+    const updateStageRows = (stages) => {
+      stages.forEach((stage) => {
+        const row = document.querySelector(`[data-stage-row="${stage.id}"]`);
+        if (!row) return;
+        const checkbox = row.querySelector('[data-stage-id]');
+        const badge = row.querySelector('.stage-badge');
+        const date = row.querySelector('.muted');
+        checkbox.checked = stage.is_done;
+        badge.classList.toggle('done', stage.is_done);
+        date.textContent = stage.completed_at || '';
+      });
     };
     document.addEventListener('change', async (event) => {
       const checkbox = event.target.closest('[data-stage-id]');
       if (!checkbox) return;
       const orderId = checkbox.dataset.orderId;
       const stageId = checkbox.dataset.stageId;
+      const previousState = !checkbox.checked;
       const data = new FormData();
       data.append('is_done', checkbox.checked ? 'true' : 'false');
-      const response = await fetch(`/orders/${orderId}/stages/${stageId}/toggle/`, { method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: data });
-      const payload = await response.json();
-      updateProgress(orderId, payload.progress, payload.current_stage);
-      checkbox.closest('.stage-row').querySelector('.stage-badge').classList.toggle('done', payload.stage.is_done);
+      try {
+        const payload = await postForm(`/orders/${orderId}/stages/${stageId}/toggle/`, data);
+        updateProgress(orderId, payload.progress, payload.current_stage);
+        updateStageRows(payload.stages || [payload.stage]);
+        if (!payload.is_active_project && new URLSearchParams(window.location.search).get('status') === 'active') {
+          location.reload();
+        }
+      } catch (error) {
+        checkbox.checked = previousState;
+        showRequestError(error.message);
+      }
     });
     document.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-stage-move]');
       if (!button) return;
-      const response = await fetch(`/orders/${button.dataset.orderId}/stages/${button.dataset.stageId}/move/`, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrfToken },
-        body: new URLSearchParams({ direction: button.dataset.stageMove })
-      });
-      if (response.ok) location.reload();
+      try {
+        await postForm(`/orders/${button.dataset.orderId}/stages/${button.dataset.stageId}/move/`, new URLSearchParams({ direction: button.dataset.stageMove }));
+        location.reload();
+      } catch (error) {
+        showRequestError(error.message);
+      }
     });
     document.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-stage-delete]');
       if (!button) return;
       if (!confirm('Удалить стадию?')) return;
-      const response = await fetch(`/orders/${button.dataset.orderId}/stages/${button.dataset.stageId}/delete/`, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrfToken }
-      });
-      if (response.ok) location.reload();
+      try {
+        await postForm(`/orders/${button.dataset.orderId}/stages/${button.dataset.stageId}/delete/`, new FormData());
+        location.reload();
+      } catch (error) {
+        showRequestError(error.message);
+      }
     });
     document.querySelectorAll('.stage-add-form').forEach((form) => {
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const orderId = form.dataset.orderId;
-        const response = await fetch(`/orders/${orderId}/stages/new/`, { method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: new FormData(form) });
-        if (response.ok) location.reload();
+        try {
+          await postForm(`/orders/${orderId}/stages/new/`, new FormData(form));
+          location.reload();
+        } catch (error) {
+          showRequestError(error.message);
+        }
       });
     });
     document.querySelectorAll('.order-comment-form').forEach((form) => {
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const orderId = form.dataset.orderId;
-        const response = await fetch(`/orders/${orderId}/comments/new/`, { method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: new FormData(form) });
-        const payload = await response.json();
+        let payload;
+        try {
+          payload = await postForm(`/orders/${orderId}/comments/new/`, new FormData(form));
+        } catch (error) {
+          showRequestError(error.message);
+          return;
+        }
         form.reset();
         const list = document.getElementById(`order-comments-${orderId}`);
         if (list.querySelector('.muted')) list.innerHTML = '';
