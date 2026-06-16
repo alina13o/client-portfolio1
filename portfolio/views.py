@@ -313,12 +313,21 @@ def managers_admin(request):
         messages.error(request, _form_error_text(form, 'Не удалось сохранить менеджера.'))
     else:
         form = ManagerForm()
+    return render(request, 'portfolio/managers_admin.html', _managers_admin_context(form=form), status=400 if form.errors else 200)
+
+
+def _managers_admin_context(form=None, edit_form=None, edit_manager_id=None):
     managers = (
         Manager.objects.filter(is_active=True)
         .annotate(clients_count=Count('client_assignments__client', distinct=True))
         .order_by('full_name')
     )
-    return render(request, 'portfolio/managers_admin.html', {'managers': managers, 'form': form}, status=400 if form.errors else 200)
+    return {
+        'managers': managers,
+        'form': form or ManagerForm(),
+        'edit_form': edit_form,
+        'edit_manager_id': edit_manager_id,
+    }
 
 
 @login_required
@@ -333,7 +342,12 @@ def manager_update(request, manager_id):
             messages.success(request, 'Менеджер обновлен.')
         else:
             messages.error(request, _form_error_text(form, 'Не удалось обновить менеджера.'))
-            return managers_admin(request)
+            return render(
+                request,
+                'portfolio/managers_admin.html',
+                _managers_admin_context(edit_form=form, edit_manager_id=manager.id),
+                status=400,
+            )
     return redirect('managers_admin')
 
 
