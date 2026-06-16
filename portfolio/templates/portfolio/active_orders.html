@@ -19,6 +19,16 @@
   </section>
 
   <section class="panel">
+    <style>
+      .order-highlight td {
+        background: #fff7e6;
+        transition: background .4s ease;
+      }
+      .order-detail-highlight {
+        outline: 2px solid rgba(0, 122, 255, .45);
+        outline-offset: 4px;
+      }
+    </style>
     <div class="table-wrap">
       <table>
         <thead>
@@ -34,7 +44,7 @@
         </thead>
         <tbody>
           {% for order in orders %}
-            <tr id="order-{{ order.id }}">
+            <tr id="order-{{ order.id }}" class="order-row">
               <td><a href="#order-detail-{{ order.id }}" onclick="document.getElementById('order-detail-{{ order.id }}').open = true;">#{{ order.id }}</a></td>
               <td><a href="{% url 'client_detail' order.client.id %}">{{ order.client.name }}</a></td>
               <td class="number">{{ order.amount|money }}</td>
@@ -50,7 +60,7 @@
                 {% else %}—{% endif %}
               </td>
             </tr>
-            <tr>
+            <tr id="order-edit-{{ order.id }}">
               <td colspan="7">
                 <details id="order-detail-{{ order.id }}">
                   <summary>Редактирование заказа #{{ order.id }}</summary>
@@ -287,8 +297,20 @@
       });
     });
     if (location.hash.startsWith('#order-')) {
-      const details = document.getElementById(`order-detail-${location.hash.replace('#order-', '')}`);
-      if (details) details.open = true;
+      const orderId = location.hash.replace('#order-', '');
+      const details = document.getElementById(`order-detail-${orderId}`);
+      const row = document.getElementById(`order-${orderId}`);
+      const editRow = document.getElementById(`order-edit-${orderId}`);
+      if (details) {
+        details.open = true;
+        row?.classList.add('order-highlight');
+        editRow?.classList.add('order-detail-highlight');
+        setTimeout(() => details.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+        setTimeout(() => {
+          row?.classList.remove('order-highlight');
+          editRow?.classList.remove('order-detail-highlight');
+        }, 3200);
+      }
     }
   </script>
 {% endblock %}

@@ -59,7 +59,7 @@
         <tbody>
           {% for order in active_orders %}
             <tr>
-              <td>#{{ order.id }}</td>
+              <td><a href="{% url 'active_orders' %}?status=all#order-{{ order.id }}">#{{ order.id }}</a></td>
               <td><a href="{% url 'client_detail' order.client.id %}">{{ order.client.name }}</a></td>
               <td class="number">{{ order.amount|money }}</td>
               <td>{{ order.created_at|date:"d.m.Y" }}</td>
