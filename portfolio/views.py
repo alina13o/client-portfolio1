@@ -5,7 +5,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
-from django.db.models import Case, DecimalField, F, Value, When
+from django.db.models import Case, DecimalField, ExpressionWrapper, F, Value, When
 from django.http import HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -71,13 +71,15 @@ def manager_dashboard(request):
 
     clients_qs = clients_for_manager(manager)
     active_orders = _active_orders_for_user(request.user)
+    totals = _financial_totals_for_clients(clients_qs)
     return render(
         request,
         'portfolio/manager_dashboard.html',
         {
             'manager': manager,
             'chart_api_url': f'/api/dashboard/charts/?manager_id={manager.id}',
-            'total_revenue_all_time': _total_revenue_for_clients(clients_qs),
+            'total_revenue_all_time': totals['revenue'],
+            'total_profit_all_time': totals['profit'],
             'active_orders': active_orders[:8],
             'active_orders_count': len(active_orders),
             'readonly': False,
@@ -91,13 +93,14 @@ def owner_dashboard(request):
         return redirect('manager_dashboard')
 
     period_1, period_2, form = _periods_from_request(request)
+    all_time_period = Period(date(1900, 1, 1), timezone.localdate())
     return render(
         request,
         'portfolio/owner_dashboard.html',
         {
             'kpis': portfolio_kpis_for_owner(),
             'comparison': compare_periods_for_owner(period_1, period_2),
-            'ranking': manager_ranking(period_2),
+            'ranking': manager_ranking(all_time_period),
             'form': form,
             'chart_api_url': '/api/dashboard/charts/',
             'total_revenue_all_time': _total_revenue_for_clients(Client.objects.all()),
@@ -113,13 +116,15 @@ def owner_manager_detail(request, manager_id):
     manager = get_object_or_404(Manager, id=manager_id)
     clients_qs = clients_for_manager(manager)
     active_orders = _active_orders_for_manager(manager)
+    totals = _financial_totals_for_clients(clients_qs)
     return render(
         request,
         'portfolio/manager_dashboard.html',
         {
             'manager': manager,
             'chart_api_url': f'/api/dashboard/charts/?manager_id={manager.id}',
-            'total_revenue_all_time': _total_revenue_for_clients(clients_qs),
+            'total_revenue_all_time': totals['revenue'],
+            'total_profit_all_time': totals['profit'],
             'active_orders': active_orders[:8],
             'active_orders_count': len(active_orders),
             'readonly': True,
@@ -906,14 +911,26 @@ def _dashboard_chart_payload(client_ids):
 
 
 def _total_revenue_for_clients(clients):
+    return _financial_totals_for_clients(clients)['revenue']
+
+
+def _financial_totals_for_clients(clients):
     client_ids = list(clients.values_list('id', flat=True))
     fact_revenue = ClientPeriodFact.objects.filter(client_id__in=client_ids).aggregate(
         value=Coalesce(Sum('revenue'), Decimal('0'))
     )['value']
-    order_revenue = Order.objects.filter(client_id__in=client_ids).exclude(status=Order.Status.CANCELLED).aggregate(
-        value=Coalesce(Sum('amount'), Decimal('0'))
-    )['value']
-    return fact_revenue + order_revenue
+    profit_expr = ExpressionWrapper(
+        F('amount') - F('cost_amount'),
+        output_field=DecimalField(max_digits=14, decimal_places=2),
+    )
+    order_totals = Order.objects.filter(client_id__in=client_ids).exclude(status=Order.Status.CANCELLED).aggregate(
+        revenue=Coalesce(Sum('amount'), Decimal('0')),
+        profit=Coalesce(Sum(profit_expr), Decimal('0')),
+    )
+    return {
+        'revenue': fact_revenue + order_totals['revenue'],
+        'profit': fact_revenue + order_totals['profit'],
+    }
 
 
 def _add_month(value):
