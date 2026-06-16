@@ -70,6 +70,7 @@ def manager_dashboard(request):
         return redirect('clients')
 
     clients_qs = clients_for_manager(manager)
+    active_orders = _active_orders_for_user(request.user)
     return render(
         request,
         'portfolio/manager_dashboard.html',
@@ -77,7 +78,8 @@ def manager_dashboard(request):
             'manager': manager,
             'chart_api_url': f'/api/dashboard/charts/?manager_id={manager.id}',
             'total_revenue_all_time': _total_revenue_for_clients(clients_qs),
-            'active_orders': _active_orders_for_user(request.user)[:8],
+            'active_orders': active_orders[:8],
+            'active_orders_count': len(active_orders),
             'readonly': False,
         },
     )
@@ -110,6 +112,7 @@ def owner_manager_detail(request, manager_id):
 
     manager = get_object_or_404(Manager, id=manager_id)
     clients_qs = clients_for_manager(manager)
+    active_orders = _active_orders_for_manager(manager)
     return render(
         request,
         'portfolio/manager_dashboard.html',
@@ -117,7 +120,8 @@ def owner_manager_detail(request, manager_id):
             'manager': manager,
             'chart_api_url': f'/api/dashboard/charts/?manager_id={manager.id}',
             'total_revenue_all_time': _total_revenue_for_clients(clients_qs),
-            'active_orders': _active_orders_for_manager(manager)[:8],
+            'active_orders': active_orders[:8],
+            'active_orders_count': len(active_orders),
             'readonly': True,
         },
     )
@@ -317,11 +321,13 @@ def managers_admin(request):
 
 
 def _managers_admin_context(form=None, edit_form=None, edit_manager_id=None):
-    managers = (
+    managers = list(
         Manager.objects.filter(is_active=True)
         .annotate(clients_count=Count('client_assignments__client', distinct=True))
         .order_by('full_name')
     )
+    for manager in managers:
+        manager.active_orders_count = len(_active_orders_for_manager(manager))
     return {
         'managers': managers,
         'form': form or ManagerForm(),
@@ -595,6 +601,7 @@ def manager_summary_api(request, manager_id):
         return HttpResponseForbidden('Недостаточно прав.')
     clients = clients_for_manager(manager)
     client_ids = list(clients.values_list('id', flat=True))
+    active_orders_count = len(_active_orders_for_manager(manager))
     facts_revenue = ClientPeriodFact.objects.filter(client_id__in=client_ids).aggregate(value=Coalesce(Sum('revenue'), Decimal('0')))['value']
     orders_revenue = Order.objects.filter(client_id__in=client_ids).exclude(status=Order.Status.CANCELLED).aggregate(value=Coalesce(Sum('amount'), Decimal('0')))['value']
     return JsonResponse(
@@ -605,6 +612,7 @@ def manager_summary_api(request, manager_id):
             'phone': manager.phone,
             'age': manager.age,
             'clients_count': clients.count(),
+            'active_orders_count': active_orders_count,
             'revenue_total': float(facts_revenue + orders_revenue),
             'portfolio_url': f'/owner/dashboard/manager/{manager.id}/' if is_owner(request.user) else '/manager/dashboard/',
         }

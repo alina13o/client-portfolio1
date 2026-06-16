@@ -199,7 +199,7 @@
             </span>
           </div>
           <div class="status-row">
-            <span class="status-pill success">{{ manager.clients_count }} клиент{% if manager.clients_count != 1 %}ов{% endif %}</span>
+            <span class="status-pill success">{{ manager.active_orders_count }} активных заказов</span>
             <span class="status-pill {% if manager.is_active %}success{% else %}muted-pill{% endif %}">
               {% if manager.is_active %}Активен{% else %}Неактивен{% endif %}
             </span>
