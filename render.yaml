@@ -10,10 +10,8 @@ services:
         generateValue: true
       - key: DJANGO_DEBUG
         value: "False"
-      - key: USE_SQLITE
-        value: "True"
-      - key: SQLITE_DB_NAME
-        value: "/tmp/render_demo.sqlite3"
+      - key: DATABASE_URL
+        sync: false
       - key: DJANGO_ALLOWED_HOSTS
         value: ".onrender.com"
       - key: CSRF_TRUSTED_ORIGINS

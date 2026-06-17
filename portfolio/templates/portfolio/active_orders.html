@@ -1,5 +1,5 @@
 {% extends "portfolio/base.html" %}
-{% load portfolio_extras %}
+{% load l10n portfolio_extras %}
 
 {% block content %}
   <section class="panel">
@@ -70,9 +70,9 @@
                       <form method="post" action="{% url 'order_update' order.id %}" class="grid">
                         {% csrf_token %}
                         <label>Дата <input type="date" name="order_date" value="{{ order.order_date|date:'Y-m-d' }}"></label>
-                        <label>Сумма <input type="number" step="0.01" name="amount" value="{{ order.amount }}"></label>
-                        <label>Себестоимость <input type="number" step="0.01" name="cost_amount" value="{{ order.cost_amount }}"></label>
-                        <label>Позиции <input type="number" name="positions_count" value="{{ order.positions_count|default:'' }}"></label>
+                        <label>Сумма <input type="number" step="0.01" name="amount" value="{{ order.amount|unlocalize }}"></label>
+                        <label>Себестоимость <input type="number" step="0.01" name="cost_amount" value="{{ order.cost_amount|unlocalize }}"></label>
+                        <label>Позиции <input type="number" name="positions_count" value="{{ order.positions_count|default:''|unlocalize }}"></label>
                         <label>Номенклатура <input name="nomenclature_group" value="{{ order.nomenclature_group }}"></label>
                         <input type="hidden" name="client" value="{{ order.client.id }}">
                         <input type="hidden" name="status" value="{{ order.status }}">

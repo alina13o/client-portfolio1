@@ -78,7 +78,7 @@ class ImportResult:
     failed_rows: int
 
 
-def import_excel_workbook(uploaded_file, user=None) -> ImportResult:
+def import_excel_workbook(uploaded_file, user=None, forced_manager: Manager | None = None) -> ImportResult:
     batch = ImportBatch.objects.create(
         filename=getattr(uploaded_file, 'name', 'uploaded.xlsx'),
         uploaded_by=user if getattr(user, 'is_authenticated', False) else None,
@@ -92,7 +92,7 @@ def import_excel_workbook(uploaded_file, user=None) -> ImportResult:
         batch.save(update_fields=['status', 'errors', 'updated_at'])
         return ImportResult(batch=batch, imported_clients=0, imported_orders=0, imported_period_facts=0, failed_rows=0)
 
-    default_manager_name = _preferred_manager_name(workbook, uploaded_file, user)
+    default_manager_name = forced_manager.full_name if forced_manager else _preferred_manager_name(workbook, uploaded_file, user)
     imported_clients = 0
     imported_profiles = 0
     sheet_log = {}
@@ -293,7 +293,7 @@ def _import_order_sheet(
                 failed += 1
                 continue
 
-            manager = _get_or_create_manager(staging.manager_name or default_manager_name)
+            manager = _get_or_create_manager(default_manager_name)
             client = _get_or_create_client(staging)
             order_date = _parse_date(staging.order_date)
             category = _get_or_create_category(staging.category_name)

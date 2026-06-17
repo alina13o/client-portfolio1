@@ -94,6 +94,36 @@ class ExcelImportTests(TestCase):
         self.assertEqual(Order.objects.get().amount, Decimal('12345.67'))
         self.assertEqual(Manager.objects.get().full_name, 'Горбикова Мария Викторовна')
 
+    def test_forced_manager_overrides_excel_manager_column(self):
+        user = User.objects.create_user(username='owner', password='secret', is_staff=True)
+        target_manager = Manager.objects.create(full_name='Целевой менеджер', email='target@example.com')
+        buffer = BytesIO()
+        pd.DataFrame(
+            [
+                {
+                    'Менеджер': 'Другой менеджер',
+                    'Код клиента': 'C-002',
+                    'Название клиента': 'ООО Выбранный импорт',
+                    'Дата заказа': '11.03.2026',
+                    'Сумма заказа': '50 000',
+                    'Себестоимость': '30 000',
+                }
+            ]
+        ).to_excel(buffer, index=False)
+        buffer.seek(0)
+        uploaded = SimpleUploadedFile(
+            'selected-manager.xlsx',
+            buffer.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        result = import_excel_workbook(uploaded, user=user, forced_manager=target_manager)
+
+        self.assertEqual(result.imported_orders, 1)
+        client = Client.objects.get(external_code='C-002')
+        self.assertTrue(ClientManagerAssignment.objects.filter(client=client, manager=target_manager).exists())
+        self.assertFalse(Manager.objects.filter(full_name='Другой менеджер').exists())
+
 
 class CrudValidationTests(TestCase):
     def setUp(self):
@@ -130,6 +160,23 @@ class CrudValidationTests(TestCase):
             },
         )
         self.assertEqual(duplicate.status_code, 400)
+
+    def test_owner_only_navigation_and_pages(self):
+        manager_user = User.objects.create_user(username='nav-manager', password='secret')
+        Manager.objects.create(user=manager_user, full_name='Менеджер навигации', email='nav@example.com')
+
+        owner_response = self.client.get('/owner/dashboard/')
+        self.assertContains(owner_response, 'Загрузка Excel')
+        self.assertContains(owner_response, 'Менеджеры')
+        self.assertContains(owner_response, 'Админка')
+
+        self.client.force_login(manager_user)
+        manager_response = self.client.get('/manager/dashboard/')
+        self.assertNotContains(manager_response, 'Загрузка Excel')
+        self.assertNotContains(manager_response, 'Менеджеры')
+        self.assertNotContains(manager_response, 'Админка')
+        self.assertEqual(self.client.get('/upload/').status_code, 403)
+        self.assertEqual(self.client.get('/admin/managers/').status_code, 403)
 
     def test_client_duplicate_inn_returns_400(self):
         manager = Manager.objects.create(full_name='Менеджер', email='manager@example.com')
@@ -269,6 +316,7 @@ class CrudValidationTests(TestCase):
     def test_manager_order_creation_assigns_client_to_manager(self):
         manager_user = User.objects.create_user(username='auto-manager', password='secret')
         manager = Manager.objects.create(user=manager_user, full_name='Авто менеджер', email='auto@example.com')
+        other_manager = Manager.objects.create(full_name='Чужой менеджер заказа', email='other-order@example.com')
         client = Client.objects.create(name='ООО Автоназначение', inn='7700000107')
         ClientManagerAssignment.objects.create(client=client, manager=manager, valid_from=date(2026, 1, 1))
         self.client.force_login(manager_user)
@@ -283,12 +331,32 @@ class CrudValidationTests(TestCase):
                 'positions_count': '2',
                 'nomenclature_group': 'Услуги',
                 'status': Order.Status.COMPLETED,
+                'manager': other_manager.id,
             },
         )
 
         self.assertEqual(response.status_code, 302)
         self.assertTrue(Order.objects.filter(client=client).exists())
         self.assertTrue(ClientManagerAssignment.objects.filter(client=client, manager=manager, valid_to__isnull=True).exists())
+        self.assertFalse(ClientManagerAssignment.objects.filter(client=client, manager=other_manager, valid_to__isnull=True).exists())
+
+    def test_order_edit_form_uses_unlocalized_decimal_values(self):
+        manager = Manager.objects.create(full_name='Менеджер формы', email='form@example.com')
+        client = Client.objects.create(name='ООО Форма', inn='7700000108')
+        ClientManagerAssignment.objects.create(client=client, manager=manager, valid_from=date(2026, 1, 1))
+        order = Order.objects.create(
+            client=client,
+            order_date=date(2026, 5, 10),
+            amount=Decimal('120000.50'),
+            cost_amount=Decimal('70000.25'),
+            positions_count=3,
+        )
+
+        response = self.client.get('/orders/active/?status=all')
+
+        self.assertContains(response, f'value=\"{order.amount}\"')
+        self.assertContains(response, f'value=\"{order.cost_amount}\"')
+        self.assertContains(response, 'name="positions_count" value="3"')
 
     def test_demo_preparation_leaves_orders_with_manager_assignments(self):
         call_command('prepare_demo_database', verbosity=0)

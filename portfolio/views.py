@@ -327,7 +327,7 @@ def fact_delete(request, client_id, fact_id):
 @login_required
 def managers_admin(request):
     if not is_owner(request.user):
-        return redirect('manager_dashboard')
+        return HttpResponseForbidden('Управлять менеджерами может только владелец.')
     if request.method == 'POST':
         form = ManagerForm(request.POST)
         if form.is_valid():
@@ -359,7 +359,7 @@ def _managers_admin_context(form=None, edit_form=None, edit_manager_id=None):
 @login_required
 def manager_update(request, manager_id):
     if not is_owner(request.user):
-        return redirect('manager_dashboard')
+        return HttpResponseForbidden('Управлять менеджерами может только владелец.')
     manager = get_object_or_404(Manager, id=manager_id)
     if request.method == 'POST':
         form = ManagerForm(request.POST, instance=manager)
@@ -381,7 +381,7 @@ def manager_update(request, manager_id):
 @require_POST
 def manager_delete(request, manager_id):
     if not is_owner(request.user):
-        return redirect('manager_dashboard')
+        return HttpResponseForbidden('Управлять менеджерами может только владелец.')
     manager = get_object_or_404(Manager, id=manager_id)
     if manager.client_assignments.exists() or manager.period_facts.exists():
         manager.is_active = False
@@ -735,10 +735,16 @@ def _client_table_queryset(user, query, sort, direction):
 
 @login_required
 def upload_excel(request):
+    if not is_owner(request.user):
+        return HttpResponseForbidden('Загружать Excel может только владелец.')
     if request.method == 'POST':
-        form = ExcelImportForm(request.POST, request.FILES)
+        form = ExcelImportForm(request.POST, request.FILES, user=request.user, require_manager=True)
         if form.is_valid():
-            result = import_excel_workbook(form.cleaned_data['file'], user=request.user)
+            result = import_excel_workbook(
+                form.cleaned_data['file'],
+                user=request.user,
+                forced_manager=form.cleaned_data['manager'],
+            )
             if result.batch.status == result.batch.Status.IMPORTED:
                 messages.success(
                     request,
@@ -754,7 +760,7 @@ def upload_excel(request):
                 messages.error(request, 'Файл загружен, но данные не удалось распознать. Детали сохранены в журнале импорта.')
             return redirect('manager_dashboard' if not is_owner(request.user) else 'owner_dashboard')
     else:
-        form = ExcelImportForm()
+        form = ExcelImportForm(user=request.user, require_manager=True)
     return render(request, 'portfolio/upload.html', {'form': form})
 
 

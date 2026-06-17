@@ -2,28 +2,24 @@
   <div class="panel chart-card">
     <div class="chart-head">
       <h2>Выручка</h2>
-      <button type="button" class="chart-reset" data-reset-chart="revenueChart">Сбросить</button>
     </div>
     <canvas id="revenueChart"></canvas>
   </div>
   <div class="panel chart-card">
     <div class="chart-head">
       <h2>Прибыль</h2>
-      <button type="button" class="chart-reset" data-reset-chart="profitChart">Сбросить</button>
     </div>
     <canvas id="profitChart"></canvas>
   </div>
   <div class="panel chart-card">
     <div class="chart-head">
       <h2>Средний чек</h2>
-      <button type="button" class="chart-reset" data-reset-chart="averageCheckChart">Сбросить</button>
     </div>
     <canvas id="averageCheckChart"></canvas>
   </div>
   <div class="panel chart-card">
     <div class="chart-head">
       <h2>Динамика выручки</h2>
-      <button type="button" class="chart-reset" data-reset-chart="growthChart">Сбросить</button>
     </div>
     <canvas id="growthChart"></canvas>
   </div>
@@ -73,12 +69,6 @@
   .chart-head h2 {
     margin-bottom: 4px;
   }
-  .chart-reset {
-    background: #f2f4f7;
-    color: #344054;
-    padding: 7px 10px;
-    width: auto;
-  }
   .profit-detail-modal {
     max-width: 1120px;
   }
@@ -95,7 +85,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
 <script>
   const chartApiUrl = "{{ chart_api_url|escapejs }}";
-  const chartsById = {};
   const rub = (value) => window.formatMoney(value);
   const escapeChartHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
   const zoomOptions = {
@@ -142,13 +131,9 @@
   });
   const createChart = (canvasId, config) => {
     const chart = new Chart(document.getElementById(canvasId), config);
-    chartsById[canvasId] = chart;
     document.getElementById(canvasId).ondblclick = () => chart.resetZoom();
     return chart;
   };
-  document.querySelectorAll('[data-reset-chart]').forEach((button) => {
-    button.addEventListener('click', () => chartsById[button.dataset.resetChart]?.resetZoom());
-  });
   fetch(chartApiUrl)
     .then((response) => response.json())
     .then(({ charts }) => {

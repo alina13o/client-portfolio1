@@ -9,12 +9,27 @@ from portfolio.services.access import is_owner, visible_clients_for_user
 
 class ExcelImportForm(forms.Form):
     file = forms.FileField(label='Excel-файл')
+    manager = forms.ModelChoiceField(label='Менеджер', queryset=Manager.objects.none(), required=False)
+
+    def __init__(self, *args, user=None, require_manager=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.require_manager = require_manager
+        self.fields['manager'].queryset = Manager.objects.filter(is_active=True).order_by('full_name')
+        self.fields['manager'].required = require_manager
+        if not require_manager:
+            self.fields['manager'].widget = forms.HiddenInput()
 
     def clean_file(self):
         uploaded_file = self.cleaned_data['file']
         if not uploaded_file.name.lower().endswith(('.xlsx', '.xls')):
             raise forms.ValidationError('Загрузите файл Excel в формате .xlsx или .xls.')
         return uploaded_file
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if self.require_manager and not cleaned_data.get('manager'):
+            self.add_error('manager', 'Выберите менеджера для импорта.')
+        return cleaned_data
 
 
 class PeriodComparisonForm(forms.Form):
